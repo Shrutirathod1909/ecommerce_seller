@@ -2,6 +2,14 @@
 header("Content-Type: application/json");
 require_once "db.php";
 
+if(!$conn){
+    echo json_encode([
+        "status"=>"error",
+        "message"=>"Database connection failed"
+    ]);
+    exit;
+}
+
 $data = json_decode(file_get_contents("php://input"), true);
 
 $order_id = $data['order_id'] ?? '';
@@ -14,26 +22,39 @@ if(empty($order_id)){
     exit;
 }
 
-$query = "SELECT 
-            product_name,
-            qty,
-            price,
-            size
-          FROM order_items
-          WHERE invoice_no = '$order_id'";
+$stmt = $conn->prepare("
+SELECT 
+product_name,
+qty,
+sale_price,
+(qty * sale_price) AS total_price,
+size,
+brand
+FROM ecommerce_orders
+WHERE order_id=?
+");
 
-$result = mysqli_query($conn,$query);
+$stmt->bind_param("s",$order_id);
+$stmt->execute();
+
+$result = $stmt->get_result();
 
 $products = [];
+$order_total = 0;
 
-while($row = mysqli_fetch_assoc($result)){
+while($row = $result->fetch_assoc()){
+
+    $order_total += $row['total_price'];
+
     $products[] = $row;
 }
 
 echo json_encode([
     "status"=>"success",
-    "products"=>$products
+    "products"=>$products,
+    "order_amount"=>$order_total
 ]);
 
+$stmt->close();
 $conn->close();
 ?>

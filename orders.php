@@ -27,7 +27,7 @@ if ($action == "list") {
               WHERE hide='N'
               ORDER BY id DESC";
 
-    $result = mysqli_query($conn,$query);
+    $result = mysqli_query($conn, $query);
 
     $orders = [];
 
@@ -36,11 +36,47 @@ if ($action == "list") {
     }
 
     echo json_encode([
-        "status"=>"success",
-        "data"=>$orders
+        "status" => "success",
+        "data" => $orders
     ]);
 }
 
+/* ===============================
+   UPDATE ORDER STATUS
+================================ */
+elseif ($action == "update_status") {
+
+    $order_id = $_POST['order_id'] ?? '';
+    $status = $_POST['status'] ?? '';
+    $approved_on = date('Y-m-d H:i:s');
+
+    if($status == 'shipped') {
+        $query = "UPDATE ecommerce_orders
+                  SET approved='shipped',
+                      dispatched='1',
+                      dispatched_on=NOW(),
+                      modified_on=NOW()
+                  WHERE order_id='$order_id'";
+    } else {
+        $query = "UPDATE ecommerce_orders
+                  SET approved='$status',
+                      approved_on='$approved_on',
+                      modified_on=NOW()
+                  WHERE order_id='$order_id'";
+    }
+
+    if(mysqli_query($conn, $query)){
+        echo json_encode([
+            "status" => "success",
+            "message" => "Order status updated"
+        ]);
+    } else {
+        echo json_encode([
+            "status" => "error",
+            "message" => "Update failed"
+        ]);
+    }
+}
 
 /* ===============================
    ORDER DETAILS
@@ -53,85 +89,23 @@ elseif ($action == "details") {
               FROM ecommerce_orders
               WHERE order_id='$order_id'";
 
-    $result = mysqli_query($conn,$query);
+    $result = mysqli_query($conn, $query);
 
     $order = mysqli_fetch_assoc($result);
 
     echo json_encode([
-        "status"=>"success",
-        "data"=>$order
+        "status" => "success",
+        "order" => $order // key "order" to match Flutter
     ]);
 }
-
-
-/* ===============================
-   UPDATE ORDER STATUS
-================================ */
-elseif ($action == "update_status") {
-
-    $order_id = $_POST['order_id'] ?? '';
-    $status = $_POST['status'] ?? '';
-
-    $query = "UPDATE ecommerce_orders
-              SET approved='$status',
-              modified_on=NOW()
-              WHERE order_id='$order_id'";
-
-    if(mysqli_query($conn,$query)){
-
-        echo json_encode([
-            "status"=>"success",
-            "message"=>"Order status updated"
-        ]);
-
-    }else{
-
-        echo json_encode([
-            "status"=>"error",
-            "message"=>"Update failed"
-        ]);
-    }
-}
-
-
-/* ===============================
-   DISPATCH ORDER
-================================ */
-elseif ($action == "dispatch") {
-
-    $order_id = $_POST['order_id'] ?? '';
-
-    $query = "UPDATE ecommerce_orders
-              SET dispatched='1',
-              dispatched_on=NOW()
-              WHERE order_id='$order_id'";
-
-    if(mysqli_query($conn,$query)){
-
-        echo json_encode([
-            "status"=>"success",
-            "message"=>"Order dispatched"
-        ]);
-
-    }else{
-
-        echo json_encode([
-            "status"=>"error",
-            "message"=>"Dispatch failed"
-        ]);
-    }
-}
-
 
 /* ===============================
    INVALID ACTION
 ================================ */
 else {
-
     echo json_encode([
-        "status"=>"error",
-        "message"=>"Invalid action"
+        "status" => "error",
+        "message" => "Invalid action"
     ]);
 }
-
 ?>
