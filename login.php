@@ -27,7 +27,8 @@ if($result->num_rows > 0){
 
     $vendor = $result->fetch_assoc();
 
-    if(password_verify($password, $vendor['password'])){
+    // MD5 password check
+    if(md5($password) == $vendor['password']){
 
         echo json_encode([
             "status"=>"success",
@@ -54,6 +55,6 @@ if($result->num_rows > 0){
     ]);
 
 }
-
+        
 $conn->close();
 ?>

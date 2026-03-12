@@ -31,7 +31,8 @@ if(!$row){
     exit;
 }
 
-if(!password_verify($old_password,$row['password'])){
+/* MD5 password check */
+if(md5($old_password) != $row['password']){
 
     echo json_encode([
         "status"=>"error",
@@ -40,7 +41,8 @@ if(!password_verify($old_password,$row['password'])){
     exit;
 }
 
-$newHash = password_hash($new_password,PASSWORD_DEFAULT);
+/* New password MD5 hash */
+$newHash = md5($new_password);
 
 $update = "UPDATE vendors SET password='$newHash' WHERE id='$vendor_id'";
 mysqli_query($conn,$update);
