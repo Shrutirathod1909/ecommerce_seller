@@ -1,13 +1,17 @@
 <?php
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 header("Content-Type: application/json");
 require_once "db.php";
 
-$data = json_decode(file_get_contents("php://input"), true);
-$action = $data['action'] ?? '';
+// Get action from GET or POST (JSON body)
+$inputJSON = file_get_contents('php://input');
+$input = json_decode($inputJSON, true);
 
+// prioritize POST JSON -> POST form -> GET
+$action = $input['action'] ?? $_POST['action'] ?? $_GET['action'] ?? '';
 
-/* ==================== SHOW PRODUCT ==================== */
-
+/* ==================== SHOW PRODUCTS ==================== */
 if($action == "show") {
     $status = $data['status'] ?? 'approved';
 
@@ -17,7 +21,6 @@ if($action == "show") {
     else if($status == "restore") $where = "hide='Y'";
     else $where = "1";
 
-    // Select products and calculate total stock from variants
     $sql = "SELECT p.productid, p.sku, p.item_name, p.subtitle, p.category, p.image1,
                    COALESCE(SUM(v.qty),0) as no_of_items,
                    COALESCE(MAX(v.sale_price),0) as sale_price
@@ -26,11 +29,18 @@ if($action == "show") {
             WHERE $where
             GROUP BY p.productid
             ORDER BY p.productid DESC";
-    
-    $result = $conn->query($sql);
 
+    $result = $conn->query($sql);
     $products = [];
+
     while($row = $result->fetch_assoc()){
+        // Correct image path
+        if (!empty($row['image1'])) {
+            $row['image1'] = IMGPATH . $row['image1'];
+        } else {
+            $row['image1'] = "";
+        }
+        
         $products[] = $row;
     }
 
@@ -40,12 +50,9 @@ if($action == "show") {
     ]);
     exit;
 }
-
-
-
 /* ==================== SHOW VARIANTS ==================== */
 if($action == "show_variants") {
-    $product_id = $data['product_id'] ?? 0;
+  $product_id = $input['product_id'] ?? 0;
     $sql = "SELECT * FROM product_detail_description WHERE product_id=? ORDER BY id ASC";
     $stmt = $conn->prepare($sql);
     $stmt->bind_param("i", $product_id);
