@@ -4,72 +4,93 @@ require_once "db.php";
 
 $data = json_decode(file_get_contents("php://input"), true);
 
-$productid = $data['productid'] ?? '';
+$productid = $data['productid'] ?? 0;
 
-$brand = $data['brand'] ?? '';
-$sku = $data['sku'] ?? '';
-$barcode = $data['barcode'] ?? '';
-$material = $data['material'] ?? '';
-$color = $data['color'] ?? '';
-$size = $data['size'] ?? '';
+/* ---------- products table fields ---------- */
 
-$length = $data['length'] ?? '';
-$width = $data['width'] ?? '';
-$height = $data['height'] ?? '';
+$vendor_id = $data['manufacturer'] ?? 0; // manufacturer = vendor_id
 $weight = $data['weight'] ?? '';
-
-$manufacturer = $data['manufacturer'] ?? '';
+$height = $data['height'] ?? '';
+$width = $data['width'] ?? '';
 $warranty_desc = $data['warranty'] ?? '';
+$material = $data['material'] ?? '';
 
-$sql = "UPDATE products SET
-brand=?,
-sku=?,
-barcode=?,
-material=?,
-color=?,
-size=?,
-length=?,
-width=?,
-height=?,
+/* ---------- product_detail_description fields ---------- */
+
+$size = $data['size'] ?? '';
+$color = $data['color'] ?? ''; // DB column = colour
+$sku_code = $data['sku'] ?? '';
+$barcode = $data['barcode'] ?? '';
+$hsn = $data['hsn'] ?? '';
+$sale_price = $data['sale_price'] ?? 0;
+
+/* ---------- Update products table ---------- */
+
+$sql1 = "UPDATE products SET
+vendor_id=?,
 weight=?,
-manufacturer=?,
-warranty_desc=?
+height=?,
+width=?,
+material=?,
+warranty_desc=?,
+modified_on=NOW()
 WHERE productid=?";
 
-$stmt = $conn->prepare($sql);
-
-$stmt->bind_param(
-"ssssssssssssi",
-$brand,
-$sku,
-$barcode,
-$material,
-$color,
-$size,
-$length,
-$width,
-$height,
-$weight,
-$manufacturer,
-$warranty_desc,
-$productid
+$stmt1 = $conn->prepare($sql1);
+$stmt1->bind_param(
+    "isssssi",
+    $vendor_id,
+    $weight,
+    $height,
+    $width,
+    $material,
+    $warranty_desc,
+    $productid
 );
 
-if($stmt->execute()){
+$result1 = $stmt1->execute();
 
+/* ---------- Update product_detail_description ---------- */
+
+$sql2 = "UPDATE product_detail_description SET
+size=?,
+colour=?,
+sku_code=?,
+barcode=?,
+hsn=?,
+sale_price=?,
+modified_on=NOW()
+WHERE product_id=?";
+
+$stmt2 = $conn->prepare($sql2);
+$stmt2->bind_param(
+    "sssssdi",
+    $size,
+    $color,
+    $sku_code,
+    $barcode,
+    $hsn,
+    $sale_price,
+    $productid
+);
+
+$result2 = $stmt2->execute();
+
+/* ---------- Response ---------- */
+
+if($result1 && $result2){
     echo json_encode([
-        "status"=>"success",
-        "message"=>"Product Info Updated"
+        "status" => "success",
+        "message" => "Product Info Updated Successfully"
     ]);
-
 }else{
-
     echo json_encode([
-        "status"=>"error",
-        "message"=>$conn->error
+        "status" => "error",
+        "message" => $conn->error
     ]);
-
 }
 
+$stmt1->close();
+$stmt2->close();
 $conn->close();
 ?>

@@ -11,33 +11,51 @@ $action = $_GET['action'] ?? '';
 ================================ */
 if ($action == "list") {
 
-    $query = "SELECT 
-                id,
-                order_id,
-                product_name,
-                customer_name,
-                order_date,
-                qty,
-                payment_mode,
-                total_price,
-                total_discount,
-                final_amount,
-                approved
-              FROM ecommerce_orders
-              WHERE hide='N'
-              ORDER BY id DESC";
+    $company_name = $_GET['company_name'] ?? '';
 
-    $result = mysqli_query($conn, $query);
+    if($company_name == ""){
+        echo json_encode([
+            "status"=>"error",
+            "message"=>"Company name missing"
+        ]);
+        exit;
+    }
+
+    $stmt = $conn->prepare("
+        SELECT 
+            id,
+            order_id,
+            product_name,
+            customer_name,
+            company_name,
+            order_date,
+            qty,
+            payment_mode,
+            total_price,
+            total_discount,
+            final_amount,
+            approved
+        FROM ecommerce_orders
+        WHERE hide='N'
+        AND LOWER(company_name)=LOWER(?)
+        ORDER BY id DESC
+    ");
+
+    $stmt->bind_param("s",$company_name);
+    $stmt->execute();
+
+    $result = $stmt->get_result();
 
     $orders = [];
 
-    while($row = mysqli_fetch_assoc($result)){
+    while($row = $result->fetch_assoc()){
         $orders[] = $row;
     }
 
     echo json_encode([
-        "status" => "success",
-        "data" => $orders
+        "status"=>"success",
+        "count"=>count($orders),
+        "data"=>$orders
     ]);
 }
 
@@ -48,32 +66,42 @@ elseif ($action == "update_status") {
 
     $order_id = $_POST['order_id'] ?? '';
     $status = $_POST['status'] ?? '';
-    $approved_on = date('Y-m-d H:i:s');
 
-    if($status == 'shipped') {
+    if($order_id=="" || $status==""){
+        echo json_encode([
+            "status"=>"error",
+            "message"=>"Missing data"
+        ]);
+        exit;
+    }
+
+    if($status == "shipped"){
+
         $query = "UPDATE ecommerce_orders
                   SET approved='shipped',
                       dispatched='1',
                       dispatched_on=NOW(),
                       modified_on=NOW()
                   WHERE order_id='$order_id'";
+
     } else {
+
         $query = "UPDATE ecommerce_orders
                   SET approved='$status',
-                      approved_on='$approved_on',
+                      approved_on=NOW(),
                       modified_on=NOW()
                   WHERE order_id='$order_id'";
     }
 
-    if(mysqli_query($conn, $query)){
+    if(mysqli_query($conn,$query)){
         echo json_encode([
-            "status" => "success",
-            "message" => "Order status updated"
+            "status"=>"success",
+            "message"=>"Order updated"
         ]);
     } else {
         echo json_encode([
-            "status" => "error",
-            "message" => "Update failed"
+            "status"=>"error",
+            "message"=>"Update failed"
         ]);
     }
 }
@@ -85,27 +113,26 @@ elseif ($action == "details") {
 
     $order_id = $_GET['order_id'] ?? '';
 
-    $query = "SELECT * 
-              FROM ecommerce_orders
-              WHERE order_id='$order_id'";
-
-    $result = mysqli_query($conn, $query);
+    $query = "SELECT * FROM ecommerce_orders WHERE order_id='$order_id'";
+    $result = mysqli_query($conn,$query);
 
     $order = mysqli_fetch_assoc($result);
 
     echo json_encode([
-        "status" => "success",
-        "order" => $order // key "order" to match Flutter
+        "status"=>"success",
+        "order"=>$order
     ]);
 }
 
 /* ===============================
-   INVALID ACTION
+   INVALID
 ================================ */
-else {
+else{
+
     echo json_encode([
-        "status" => "error",
-        "message" => "Invalid action"
+        "status"=>"error",
+        "message"=>"Invalid action"
     ]);
+
 }
 ?>

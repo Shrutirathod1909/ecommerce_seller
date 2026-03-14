@@ -1,14 +1,9 @@
 <?php
-header("Content-Type: application/json");
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST");
-header("Access-Control-Allow-Headers: Content-Type");
-
-ini_set('display_errors', 1);
 error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
+header("Content-Type: application/json");
 require_once "db.php";
-
 $debug = false; 
 
 $raw = file_get_contents("php://input");
@@ -29,7 +24,7 @@ if(empty($email) || empty($password)){
     exit;
 }
 
-$stmt = $conn->prepare("SELECT id,email_id,password FROM vendors WHERE email_id=?");
+$stmt = $conn->prepare("SELECT id,email_id,password,company_name FROM vendors WHERE email_id=?");
 
 if(!$stmt){
     echo json_encode([
@@ -56,7 +51,9 @@ if($result->num_rows > 0){
             "status"=>"success",
             "vendor"=>[
                 "vendor_id"=>$vendor['id'],
-                "email"=>$vendor['email_id']
+                "email"=>$vendor['email_id'],
+                 "company_name"=>$vendor['company_name']
+                
             ]
         ]);
 
