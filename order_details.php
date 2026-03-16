@@ -31,6 +31,7 @@ pincode,
 
 approved,
 approved_on,
+remark,
 
 IFNULL(total_price,0) as total_price,
 IFNULL(cgst,0) as cgst,
@@ -41,7 +42,7 @@ IFNULL(final_amount,0) as final_amount
 
 FROM ecommerce_orders
 WHERE order_id=?
-LIMIT 1
+
 ");
 
 $stmt->bind_param("s",$order_id);

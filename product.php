@@ -181,22 +181,53 @@ if($action == "delete" || $action == "restore"){
 
     $productid = $input['productid'] ?? 0;
 
-    $hide = ($action == "delete") ? "Y" : "N";
+    if(empty($productid)){
+        echo json_encode([
+            "status"=>"error",
+            "message"=>"Product ID Missing"
+        ]);
+        exit;
+    }
 
-    $stmt = $conn->prepare("
-        UPDATE products
-        SET hide=?
-        WHERE productid=?
-    ");
+    if($action == "delete"){
 
-    $stmt->bind_param("si",$hide,$productid);
+        // delete only pending product
+        $stmt = $conn->prepare("
+            UPDATE products
+            SET hide='Y'
+            WHERE productid=? AND verified=0 AND rejected=0
+        ");
+
+        $stmt->bind_param("i",$productid);
+
+    }else{
+
+        // restore product
+        $stmt = $conn->prepare("
+            UPDATE products
+            SET hide='N'
+            WHERE productid=?
+        ");
+
+        $stmt->bind_param("i",$productid);
+    }
 
     if($stmt->execute()){
 
-        echo json_encode([
-            "status"=>"success",
-            "message"=>"Action Completed"
-        ]);
+        if($stmt->affected_rows > 0){
+
+            echo json_encode([
+                "status"=>"success",
+                "message"=>"Action Completed"
+            ]);
+
+        }else{
+
+            echo json_encode([
+                "status"=>"error",
+                "message"=>"Only pending products can be deleted"
+            ]);
+        }
 
     }else{
 
@@ -209,6 +240,7 @@ if($action == "delete" || $action == "restore"){
     $stmt->close();
     exit;
 }
+
 /* ================= add_variants ================= */
 
 if($action == "add_variants") {
