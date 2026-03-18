@@ -1,61 +1,80 @@
 <?php
-
+header("Content-Type: application/json");
 include "db.php";
 
 $data = json_decode(file_get_contents("php://input"), true);
 
-$action = $data['action'];
+$action = $data['action'] ?? '';
+$vendor_id = $data['vendor_id'] ?? '';
 
 if($action == "get"){
 
-    $vendor_id = $data['vendor_id'];
+    if(empty($vendor_id)){
+        echo json_encode(["status"=>"error","message"=>"Vendor ID missing"]);
+        exit;
+    }
 
-    $q = mysqli_query($conn,"SELECT
-    vendor_name,
-    business_type,
-    pancard_no,
-    contactable_person,
-    designation,
-    phone,
-    email_id,
-    street,
-    city,
-    state,
-    country,
-    pincode
-    FROM vendors WHERE id='$vendor_id'");
+    $stmt = $conn->prepare("SELECT * FROM vendors WHERE id=?");
+    $stmt->bind_param("s", $vendor_id);
+    $stmt->execute();
 
-    $row = mysqli_fetch_assoc($q);
+    $result = $stmt->get_result();
+    $row = $result->fetch_assoc();
 
-    echo json_encode([
-        "status"=>"success",
-        "data"=>$row
-    ]);
+    echo json_encode(["status"=>"success","data"=>$row]);
 }
+
+/* ================= UPDATE ================= */
 
 if($action == "update"){
 
-    $vendor_id = $data['vendor_id'];
+    if(empty($vendor_id)){
+        echo json_encode(["status"=>"error","message"=>"Vendor ID missing"]);
+        exit;
+    }
 
-    mysqli_query($conn,"UPDATE vendors SET
+    $stmt = $conn->prepare("UPDATE vendors SET
+        vendor_name=?,
+        business_type=?,
+        pancard_no=?,
+        contactable_person=?,
+        designation=?,
+        phone=?,
+        email_id=?,
+        street=?,
+        city=?,
+        state=?,
+        country=?,
+        pincode=?
+        WHERE id=?");
 
-    vendor_name='".$data['vendor_name']."',
-    business_type='".$data['business_type']."',
-    pancard_no='".$data['pancard_no']."',
-    contactable_person='".$data['contactable_person']."',
-    designation='".$data['designation']."',
-    phone='".$data['phone']."',
-    email_id='".$data['email_id']."',
-    street='".$data['street']."',
-    city='".$data['city']."',
-    state='".$data['state']."',
-    country='".$data['country']."',
-    pincode='".$data['pincode']."'
+    $stmt->bind_param(
+        "sssssssssssss",
+        $data['vendor_name'],
+        $data['business_type'],
+        $data['pancard_no'],
+        $data['contactable_person'],
+        $data['designation'],
+        $data['phone'],
+        $data['email_id'],
+        $data['street'],
+        $data['city'],
+        $data['state'],
+        $data['country'],
+        $data['pincode'],
+        $vendor_id
+    );
 
-    WHERE id='$vendor_id'");
-
-    echo json_encode([
-        "status"=>"success",
-        "message"=>"Profile Updated"
-    ]);
+    if($stmt->execute()){
+        echo json_encode([
+            "status"=>"success",
+            "message"=>"Profile Updated Successfully"
+        ]);
+    } else {
+        echo json_encode([
+            "status"=>"error",
+            "message"=>$stmt->error
+        ]);
+    }
 }
+?>

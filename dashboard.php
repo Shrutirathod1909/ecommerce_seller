@@ -1,166 +1,80 @@
 <?php
-
 header("Content-Type: application/json");
-require_once "db.php";
+require_once "db.php"; // Your DB connection file
 
 $conn = new mysqli($servername, $username, $password, $database);
-
 if ($conn->connect_error) {
     http_response_code(500);
     echo json_encode(["error" => "Database connection failed"]);
     exit;
 }
 
+/* ================= INPUT ================= */
+$vendor_id = isset($_GET['vendor_id']) ? intval($_GET['vendor_id']) : 0;
 $company_name = $_GET['company_name'] ?? '';
-$range = $_GET['range'] ?? null;
 
-if (!$company_name) {
+if (!$vendor_id) {
     http_response_code(400);
-    echo json_encode(["error" => "Company name is required"]);
+    echo json_encode(["error" => "Vendor ID is required"]);
     exit;
 }
 
-$start_date = null;
-$end_date = null;
-
-if ($range) {
-
-    $today = date('Y-m-d');
-
-    switch ($range) {
-
-        case '1week':
-            $start_date = date('Y-m-d', strtotime('-7 days'));
-            $end_date = $today;
-            break;
-
-        case '1month':
-            $start_date = date('Y-m-d', strtotime('-1 month'));
-            $end_date = $today;
-            break;
-
-        case '5months':
-            $start_date = date('Y-m-d', strtotime('-5 months'));
-            $end_date = $today;
-            break;
-
-        case '1year':
-            $start_date = date('Y-m-d', strtotime('-1 year'));
-            $end_date = $today;
-            break;
-    }
-}
-
-$dateFilter = "";
-$params = [$company_name];
-$types = "s";
-
-if ($start_date && $end_date) {
-
-    $dateFilter = " AND o.order_date BETWEEN ? AND ? ";
-    $params[] = $start_date;
-    $params[] = $end_date;
-    $types .= "ss";
-}
-
+/* ================= PRODUCT STATUS ================= */
 $sql = "
-
 SELECT 
-    o.company_name,
-    COUNT(DISTINCT o.customer_name) AS customer_count,
-    SUM(CAST(o.qty AS UNSIGNED)) AS total_products_sold,
-    SUM(o.final_amount) AS total_revenue,
-    AVG(o.final_amount) AS avg_order_value
-
-FROM ecommerce_orders o
-
-JOIN products p 
-ON o.product_id = p.productid
-
-WHERE p.hide='N'
-AND o.company_name = ?
-$dateFilter
-
-GROUP BY o.company_name
-
+    SUM(CASE WHEN verified=1 AND rejected=0 AND hide='N' THEN 1 ELSE 0 END) AS approved_products,
+    SUM(CASE WHEN verified=0 AND rejected=0 AND hide='N' THEN 1 ELSE 0 END) AS pending_products,
+    SUM(CASE WHEN rejected=1 AND hide='N' THEN 1 ELSE 0 END) AS rejected_products
+FROM products
+WHERE vendor_id = ?
 ";
 
 $stmt = $conn->prepare($sql);
-$stmt->bind_param($types, ...$params);
+$stmt->bind_param("i", $vendor_id);
 $stmt->execute();
-
 $result = $stmt->get_result();
 
 $dashboard = [
-    "company_name" => $company_name,
-    "customer_count" => 0,
-    "total_products_sold" => 0,
-    "total_revenue" => 0,
-    "avg_order_value" => 0,
-    "top_product_name" => null,
-    "top_product_owner" => null,
+    "approved_products" => 0,
+    "pending_products" => 0,
+    "rejected_products" => 0,
+    "total_products" => 0,
+    "top_product_name" => "",
     "top_product_qty" => 0,
-    "start_date" => $start_date,
-    "end_date" => $end_date
 ];
 
 if ($row = $result->fetch_assoc()) {
-
-    $dashboard["customer_count"] = intval($row['customer_count']);
-    $dashboard["total_products_sold"] = intval($row['total_products_sold']);
-    $dashboard["total_revenue"] = floatval($row['total_revenue']);
-    $dashboard["avg_order_value"] = floatval($row['avg_order_value']);
+    $dashboard["approved_products"] = intval($row['approved_products'] ?? 0);
+    $dashboard["pending_products"] = intval($row['pending_products'] ?? 0);
+    $dashboard["rejected_products"] = intval($row['rejected_products'] ?? 0);
+    $dashboard["total_products"] = $dashboard["approved_products"] + $dashboard["pending_products"] + $dashboard["rejected_products"];
 }
-
 $stmt->close();
 
-
-/* -------- TOP PRODUCT -------- */
-
+/* ================= TOP PRODUCT ================= */
 $sql2 = "
-
-SELECT 
-p.item_name,
-o.customer_name,
-SUM(CAST(o.qty AS UNSIGNED)) as total_qty
-
+SELECT p.item_name, SUM(CAST(o.qty AS UNSIGNED)) AS total_qty
 FROM ecommerce_orders o
-
-JOIN products p 
-ON o.product_id = p.productid
-
-WHERE p.hide='N'
-AND o.company_name=?
-
-GROUP BY p.item_name,o.customer_name
-
+JOIN products p ON o.product_id = p.productid
+WHERE p.hide='N' AND p.vendor_id = ?
+GROUP BY p.item_name
 ORDER BY total_qty DESC
-
 LIMIT 1
-
 ";
 
 $stmt2 = $conn->prepare($sql2);
-$stmt2->bind_param("s",$company_name);
+$stmt2->bind_param("i", $vendor_id);
 $stmt2->execute();
-
 $result2 = $stmt2->get_result();
 
 if ($row2 = $result2->fetch_assoc()) {
-
-    $topQty = intval($row2['total_qty']);
-
-    if ($topQty >= 20) {
-
-        $dashboard["top_product_name"] = $row2['item_name'];
-        $dashboard["top_product_owner"] = $row2['customer_name'];
-        $dashboard["top_product_qty"] = $topQty;
-
-    }
+    $dashboard["top_product_name"] = $row2['item_name'] ?? "";
+    $dashboard["top_product_qty"] = intval($row2['total_qty'] ?? 0);
 }
 
+$stmt2->close();
+
+/* ================= OUTPUT ================= */
 echo json_encode($dashboard);
-
 $conn->close();
-
 ?>
