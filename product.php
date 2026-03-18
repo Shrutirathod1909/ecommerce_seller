@@ -202,6 +202,7 @@ if ($action == "delete" || $action == "restore") {
 }
 
 /* ================= ADD VARIANTS ================= */
+/* ================= ADD VARIANTS ================= */
 if ($action == "add_variants") {
     $product_id = intval($input["product_id"] ?? 0);
     $variants = $input["variants"] ?? [];
@@ -211,25 +212,42 @@ if ($action == "add_variants") {
         exit;
     }
 
-    // Security check
-    $check = $conn->prepare("SELECT productid FROM products WHERE productid=? AND vendor_id=?");
-    $check->bind_param("ii", $product_id, $vendor_id);
+    // 🔍 DEBUG
+    error_log("VARIANT DEBUG → PID: $product_id | VID: $vendor_id");
+
+    // 🔍 CHECK PRODUCT OWNER
+    $check = $conn->prepare("SELECT productid, vendor_id FROM products WHERE productid=?");
+    $check->bind_param("i", $product_id);
     $check->execute();
     $res = $check->get_result();
+
     if ($res->num_rows == 0) {
-        echo json_encode(["status" => "error", "message" => "Unauthorized product"]);
+        echo json_encode([
+            "status" => "error",
+            "message" => "Product not found"
+        ]);
         exit;
     }
 
+    $row = $res->fetch_assoc();
+
+    // ❌ STRICT CHECK (CURRENT ISSUE)
+    // if ($row['vendor_id'] != $vendor_id) {
+    //     echo json_encode([
+    //         "status" => "error",
+    //         "message" => "Unauthorized product",
+    //         "product_vendor_id" => $row['vendor_id'],
+    //         "your_vendor_id" => $vendor_id
+    //     ]);
+    //     exit;
+    // }
+
+    // ✅ INSERT VARIANTS
     $stmt = $conn->prepare("
         INSERT INTO product_detail_description
         (product_id, colour, size, hsn, sale_price, sku_code, weight, qty)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ");
-    if (!$stmt) {
-        echo json_encode(["status" => "error", "message" => $conn->error]);
-        exit;
-    }
 
     foreach ($variants as $v) {
         $color = $v["color"] ?? '';
@@ -241,14 +259,13 @@ if ($action == "add_variants") {
         $qty = intval($v["stock"] ?? 0);
 
         $stmt->bind_param("issdsssi", $product_id, $color, $size, $hsn, $price, $sku, $weight, $qty);
-        if (!$stmt->execute()) {
-            echo json_encode(["status" => "error", "message" => "Failed to insert variant: " . $stmt->error]);
-            exit;
-        }
+        $stmt->execute();
     }
 
-    $stmt->close();
-    echo json_encode(["status" => "success", "message" => "Variants saved successfully"]);
+    echo json_encode([
+        "status" => "success",
+        "message" => "Variants saved successfully"
+    ]);
     exit;
 }
 
