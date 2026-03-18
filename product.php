@@ -137,6 +137,7 @@ if ($action == "show_variants") {
 }
 
 /* ================= ADD PRODUCT ================= */
+
 if ($action == "add") {
     $item_name = $input['item_name'] ?? '';
     $subtitle = $input['subtitle'] ?? '';
@@ -157,6 +158,7 @@ if ($action == "add") {
         (vendor_id, item_name, subtitle, category, subcategory, child_category, gender, payment_method, country_of_origin, product_description, verified, rejected, hide)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
+
     if (!$stmt) {
         echo json_encode(["status" => "error", "message" => $conn->error]);
         exit;
@@ -170,7 +172,6 @@ if ($action == "add") {
     );
 
     if ($stmt->execute()) {
-        // return productid immediately
         $product_id = $conn->insert_id;
         echo json_encode(["status" => "success", "productid" => $product_id, "message" => "Product Created"]);
     } else {
@@ -179,6 +180,50 @@ if ($action == "add") {
     $stmt->close();
     exit;
 }
+
+// ✅ Fetch products by status
+if ($action == "show") {
+    $status = $input['status'] ?? "approved";
+    $sql = "SELECT * FROM products WHERE vendor_id=? AND hide='N'";
+    if ($status == "approved") $sql .= " AND verified='1'";
+    if ($status == "pending") $sql .= " AND verified='0'";
+    if ($status == "rejected") $sql .= " AND rejected='1'";
+    if ($status == "restore") $sql .= " AND hide='Y'";
+
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("i", $vendor_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $data = [];
+    while ($row = $result->fetch_assoc()) $data[] = $row;
+    echo json_encode(["status" => "success", "data" => $data]);
+    exit;
+}
+
+// ✅ Delete / Restore
+if ($action == "delete" || $action == "restore") {
+    $productid = $input['productid'] ?? 0;
+    $hide = ($action == "restore") ? 'N' : 'Y';
+    $stmt = $conn->prepare("UPDATE products SET hide=? WHERE productid=? AND vendor_id=?");
+    $stmt->bind_param("sii", $hide, $productid, $vendor_id);
+    $stmt->execute();
+    echo json_encode(["status" => "success"]);
+    exit;
+}
+
+// ✅ Show variants
+if ($action == "show_variants") {
+    $product_id = $input['product_id'] ?? 0;
+    $stmt = $conn->prepare("SELECT * FROM variants WHERE product_id=? AND vendor_id=?");
+    $stmt->bind_param("ii", $product_id, $vendor_id);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $data = [];
+    while ($row = $res->fetch_assoc()) $data[] = $row;
+    echo json_encode(["status" => "success", "data" => $data]);
+    exit;
+}
+?>
 
 /* ================= DELETE / RESTORE ================= */
 if ($action == "delete" || $action == "restore") {
@@ -269,6 +314,89 @@ if ($action == "add_variants") {
     exit;
 }
 
+/* ================= GET PRODUCT FOR EDIT ================= */
+if ($action == "get_product") {
+    $product_id = $input['productid'] ?? $_GET['productid'] ?? 0;
+
+    if (!$product_id) {
+        echo json_encode(["status" => "error", "message" => "Product ID Missing"]);
+        exit;
+    }
+
+    // Fetch product main info
+    $stmt = $conn->prepare("
+        SELECT 
+            productid,
+            vendor_id,
+            item_name,
+            subtitle,
+            category,
+            subcategory,
+            child_category,
+            gender,
+            payment_method,
+            country_of_origin,
+            product_description,
+            image1,
+            image2,
+            image3,
+            verified,
+            rejected,
+            hide
+        FROM products
+        WHERE productid=? AND vendor_id=?
+        LIMIT 1
+    ");
+    $stmt->bind_param("ii", $product_id, $vendor_id);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $product = $res->fetch_assoc();
+
+    if (!$product) {
+        echo json_encode(["status" => "error", "message" => "Product not found"]);
+        exit;
+    }
+
+    // Fix image URLs
+    for ($i = 1; $i <= 3; $i++) {
+        $imgKey = "image$i";
+        if (!empty($product[$imgKey])) {
+            if (file_exists("uploads/" . $product[$imgKey])) $product[$imgKey] = UPLOAD_URL . $product[$imgKey];
+            else $product[$imgKey] = IMGPATH . $product[$imgKey];
+        }
+    }
+
+    // Fetch variants
+    $stmt2 = $conn->prepare("
+        SELECT 
+            colour AS color,
+            size,
+            hsn,
+            sale_price,
+            sku_code,
+            weight,
+            qty
+        FROM product_detail_description
+        WHERE product_id=?
+    ");
+    $stmt2->bind_param("i", $product_id);
+    $stmt2->execute();
+    $res2 = $stmt2->get_result();
+
+    $variants = [];
+    while ($row = $res2->fetch_assoc()) {
+        $variants[] = $row;
+    }
+
+    echo json_encode([
+        "status" => "success",
+        "data" => [
+            "product" => $product,
+            "variants" => $variants
+        ]
+    ]);
+    exit;
+}
 /* ================= INVALID ACTION ================= */
 echo json_encode(["status" => "error", "message" => "Invalid Action"]);
 $conn->close();
