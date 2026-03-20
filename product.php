@@ -1,8 +1,8 @@
 <?php
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
-
 header("Content-Type: application/json");
+
 require_once "db.php";
 
 /* -------- GET INPUT -------- */
@@ -10,37 +10,30 @@ $inputJSON = file_get_contents("php://input");
 $input = json_decode($inputJSON, true);
 if (!$input) $input = $_POST;
 
-/* -------- VENDOR ID -------- */
-$vendor_id = $input['vendor_id'] ?? $_GET['vendor_id'] ?? 0;
-if (!$vendor_id || !is_numeric($vendor_id)) {
-    echo json_encode(["status" => "error", "message" => "vendor_id required"]);
-    exit;
-}
-
-/* -------- ACTION -------- */
-$action = $input['action'] ?? $_GET['action'] ?? '';
+/* -------- SAFE INPUT -------- */
+$action = trim($input['action'] ?? $_GET['action'] ?? '');
+$vendor_id = intval($input['vendor_id'] ?? $_GET['vendor_id'] ?? 0);
 
 /* ================= SHOW PRODUCTS ================= */
 if ($action == "show") {
+
     $status = $input['status'] ?? $_GET['status'] ?? "approved";
 
-    if ($status == "approved") $where = "p.verified='1' AND p.rejected=0 AND p.hide='N'";
-    else if ($status == "pending") $where = "p.verified='0' AND p.rejected=0 AND p.hide='N'";
+    if ($status == "approved") $where = "p.verified=1 AND p.rejected=0 AND p.hide='N'";
+    else if ($status == "pending") $where = "p.verified=0 AND p.rejected=0 AND p.hide='N'";
     else if ($status == "rejected") $where = "p.rejected=1 AND p.hide='N'";
     else if ($status == "restore") $where = "p.hide='Y'";
     else $where = "1";
+
+    if (!empty($vendor_id)) {
+        $where .= " AND p.vendor_id = $vendor_id";
+    }
 
     $sql = "SELECT 
                 p.productid,
                 p.item_name,
                 p.subtitle,
                 p.category,
-                p.subcategory,
-                p.child_category,
-                p.gender,
-                p.payment_method,
-                p.country_of_origin,
-                p.product_description,
                 p.image1,
                 MAX(v.sku_code) as sku,
                 COALESCE(SUM(v.qty),0) as stock,
@@ -48,356 +41,223 @@ if ($action == "show") {
             FROM products p
             LEFT JOIN product_detail_description v 
             ON p.productid = v.product_id
-            WHERE $where AND p.vendor_id=?
-            GROUP BY 
-                p.productid,
-                p.item_name,
-                p.subtitle,
-                p.category,
-                p.subcategory,
-                p.child_category,
-                p.gender,
-                p.payment_method,
-                p.country_of_origin,
-                p.product_description,
-                p.image1
+            WHERE $where
+            GROUP BY p.productid
             ORDER BY p.productid DESC";
 
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        echo json_encode(["status" => "error", "message" => $conn->error]);
-        exit;
-    }
-
-    $stmt->bind_param("i", $vendor_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-
+    $result = $conn->query($sql);
     $products = [];
+
     while ($row = $result->fetch_assoc()) {
         if (!empty($row['image1'])) {
-            if (file_exists("uploads/" . $row['image1'])) $row['image1'] = UPLOAD_URL . $row['image1'];
-            else $row['image1'] = IMGPATH . $row['image1'];
+            $row['image1'] = UPLOAD_URL . $row['image1'];
         }
         $products[] = $row;
     }
 
     echo json_encode(["status" => "success", "data" => $products]);
-    $stmt->close();
     exit;
 }
 
-/* ================= SHOW VARIANTS ================= */
-    
-if ($action == "show_variants") {
-    $product_id = $input['product_id'] ?? $_GET['product_id'] ?? 0;
+/* ================= GET SINGLE PRODUCT ================= */
+if ($action == "get_product") {
 
-    if (!$product_id) {
+    // 🔥 FIX: accept both names
+    $productid = intval($input['product_id'] ?? $input['productid'] ?? $_GET['productid'] ?? 0);
+
+    if (empty($productid)) {
         echo json_encode(["status" => "error", "message" => "Product ID Missing"]);
         exit;
     }
 
-    $stmt = $conn->prepare("
-        SELECT 
-            product_id,
-            colour AS color,
-            size,
-            hsn,
-            sale_price,
-            sku_code,
-            weight,
-            qty
-        FROM product_detail_description 
-        WHERE product_id=?"
-    );
-
-    if (!$stmt) {
-        echo json_encode(["status" => "error", "message" => $conn->error]);
-        exit;
-    }
-
-    // ✅ VERY IMPORTANT
-    $stmt->bind_param("i", $product_id);
-    $stmt->execute();
-
-    $result = $stmt->get_result();
-
-    $variants = [];
-    while ($row = $result->fetch_assoc()) {
-        $variants[] = $row;
-    }
-
-    echo json_encode([
-        "status" => "success",
-        "data" => $variants
-    ]);
-
-    $stmt->close();
-    exit;
-}
-
-/* ================= ADD PRODUCT ================= */
-
-if ($action == "add") {
-    $item_name = $input['item_name'] ?? '';
-    $subtitle = $input['subtitle'] ?? '';
-    $category = $input['category'] ?? '';
-    $subcategory = $input['subcategory'] ?? '';
-    $child_category = $input['child_category'] ?? '';
-    $gender = $input['gender'] ?? '';
-    $payment_method = $input['payment_method'] ?? '';
-    $country_of_origin = $input['country_of_origin'] ?? '';
-    $description = $input['description'] ?? '';
-
-    $verified = '0'; // pending
-    $rejected = 0;
-    $hide = 'N';
-
-    $stmt = $conn->prepare("
-        INSERT INTO products
-        (vendor_id, item_name, subtitle, category, subcategory, child_category, gender, payment_method, country_of_origin, product_description, verified, rejected, hide)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ");
-
-    if (!$stmt) {
-        echo json_encode(["status" => "error", "message" => $conn->error]);
-        exit;
-    }
-
-    $stmt->bind_param(
-        "issssssssssss",
-        $vendor_id, $item_name, $subtitle, $category, $subcategory,
-        $child_category, $gender, $payment_method, $country_of_origin,
-        $description, $verified, $rejected, $hide
-    );
-
-    if ($stmt->execute()) {
-        $product_id = $conn->insert_id;
-        echo json_encode(["status" => "success", "productid" => $product_id, "message" => "Product Created"]);
+    // 🔥 FIX: vendor optional
+    if ($vendor_id > 0) {
+        $stmt = $conn->prepare("
+            SELECT productid, item_name, subtitle, category, image1, vendor_id
+            FROM products 
+            WHERE productid=? AND vendor_id=?
+        ");
+        $stmt->bind_param("ii", $productid, $vendor_id);
     } else {
-        echo json_encode(["status" => "error", "message" => $conn->error]);
+        $stmt = $conn->prepare("
+            SELECT productid, item_name, subtitle, category, image1, vendor_id
+            FROM products 
+            WHERE productid=?
+        ");
+        $stmt->bind_param("i", $productid);
     }
-    $stmt->close();
-    exit;
-}
 
-// ✅ Fetch products by status
-if ($action == "show") {
-    $status = $input['status'] ?? "approved";
-    $sql = "SELECT * FROM products WHERE vendor_id=? AND hide='N'";
-    if ($status == "approved") $sql .= " AND verified='1'";
-    if ($status == "pending") $sql .= " AND verified='0'";
-    if ($status == "rejected") $sql .= " AND rejected='1'";
-    if ($status == "restore") $sql .= " AND hide='Y'";
-
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("i", $vendor_id);
     $stmt->execute();
-    $result = $stmt->get_result();
-    $data = [];
-    while ($row = $result->fetch_assoc()) $data[] = $row;
-    echo json_encode(["status" => "success", "data" => $data]);
-    exit;
-}
+    $product = $stmt->get_result()->fetch_assoc();
 
-// ✅ Delete / Restore
-if ($action == "delete" || $action == "restore") {
-    $productid = $input['productid'] ?? 0;
-    $hide = ($action == "restore") ? 'N' : 'Y';
-    $stmt = $conn->prepare("UPDATE products SET hide=? WHERE productid=? AND vendor_id=?");
-    $stmt->bind_param("sii", $hide, $productid, $vendor_id);
-    $stmt->execute();
-    echo json_encode(["status" => "success"]);
-    exit;
-}
-
-// ✅ Show variants
-if ($action == "show_variants") {
-    $product_id = $input['product_id'] ?? 0;
-    $stmt = $conn->prepare("SELECT * FROM variants WHERE product_id=? AND vendor_id=?");
-    $stmt->bind_param("ii", $product_id, $vendor_id);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $data = [];
-    while ($row = $res->fetch_assoc()) $data[] = $row;
-    echo json_encode(["status" => "success", "data" => $data]);
-    exit;
-}
-?>
-
-/* ================= DELETE / RESTORE ================= */
-if ($action == "delete" || $action == "restore") {
-    $productid = $input['productid'] ?? 0;
-    if (!$productid) {
-        echo json_encode(["status" => "error", "message" => "Product ID Missing"]);
-        exit;
-    }
-
-    if ($action == "delete") {
-        $stmt = $conn->prepare("UPDATE products SET hide='Y' WHERE productid=? AND vendor_id=? AND verified='0' AND rejected=0");
-    } else {
-        $stmt = $conn->prepare("UPDATE products SET hide='N' WHERE productid=? AND vendor_id=?");
-    }
-
-    $stmt->bind_param("ii", $productid, $vendor_id);
-    if ($stmt->execute()) echo json_encode(["status" => "success", "message" => "Action Completed"]);
-    else echo json_encode(["status" => "error", "message" => $conn->error]);
-    $stmt->close();
-    exit;
-}
-
-/* ================= ADD VARIANTS ================= */
-/* ================= ADD VARIANTS ================= */
-if ($action == "add_variants") {
-    $product_id = intval($input["product_id"] ?? 0);
-    $variants = $input["variants"] ?? [];
-
-    if (!$product_id || empty($variants)) {
-        echo json_encode(["status" => "error", "message" => "Invalid product ID or empty variants"]);
-        exit;
-    }
-
-    // 🔍 DEBUG
-    error_log("VARIANT DEBUG → PID: $product_id | VID: $vendor_id");
-
-    // 🔍 CHECK PRODUCT OWNER
-    $check = $conn->prepare("SELECT productid, vendor_id FROM products WHERE productid=?");
-    $check->bind_param("i", $product_id);
-    $check->execute();
-    $res = $check->get_result();
-
-    if ($res->num_rows == 0) {
+    if (!$product) {
         echo json_encode([
             "status" => "error",
-            "message" => "Product not found"
+            "message" => "Product not found",
+            "debug" => [
+                "productid" => $productid,
+                "vendor_id" => $vendor_id
+            ]
         ]);
         exit;
     }
 
-    $row = $res->fetch_assoc();
-
-    // ❌ STRICT CHECK (CURRENT ISSUE)
-    // if ($row['vendor_id'] != $vendor_id) {
-    //     echo json_encode([
-    //         "status" => "error",
-    //         "message" => "Unauthorized product",
-    //         "product_vendor_id" => $row['vendor_id'],
-    //         "your_vendor_id" => $vendor_id
-    //     ]);
-    //     exit;
-    // }
-
-    // ✅ INSERT VARIANTS
-    $stmt = $conn->prepare("
-        INSERT INTO product_detail_description
-        (product_id, colour, size, hsn, sale_price, sku_code, weight, qty)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ");
-
-    foreach ($variants as $v) {
-        $color = $v["color"] ?? '';
-        $size = $v["size"] ?? '';
-        $hsn = $v["hsn"] ?? '';
-        $sku = $v["sku"] ?? '';
-        $price = floatval($v["price"] ?? 0);
-        $weight = $v["weight"] ?? '';
-        $qty = intval($v["stock"] ?? 0);
-
-        $stmt->bind_param("issdsssi", $product_id, $color, $size, $hsn, $price, $sku, $weight, $qty);
-        $stmt->execute();
+    if (!empty($product['image1'])) {
+        $product['image1'] = UPLOAD_URL . $product['image1'];
     }
 
-    echo json_encode([
-        "status" => "success",
-        "message" => "Variants saved successfully"
-    ]);
-    exit;
-}
-
-/* ================= GET PRODUCT FOR EDIT ================= */
-if ($action == "get_product") {
-    $product_id = $input['productid'] ?? $_GET['productid'] ?? 0;
-
-    if (!$product_id) {
-        echo json_encode(["status" => "error", "message" => "Product ID Missing"]);
-        exit;
-    }
-
-    // Fetch product main info
-    $stmt = $conn->prepare("
-        SELECT 
-            productid,
-            vendor_id,
-            item_name,
-            subtitle,
-            category,
-            subcategory,
-            child_category,
-            gender,
-            payment_method,
-            country_of_origin,
-            product_description,
-            image1,
-            image2,
-            image3,
-            verified,
-            rejected,
-            hide
-        FROM products
-        WHERE productid=? AND vendor_id=?
-        LIMIT 1
-    ");
-    $stmt->bind_param("ii", $product_id, $vendor_id);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $product = $res->fetch_assoc();
-
-    if (!$product) {
-        echo json_encode(["status" => "error", "message" => "Product not found"]);
-        exit;
-    }
-
-    // Fix image URLs
-    for ($i = 1; $i <= 3; $i++) {
-        $imgKey = "image$i";
-        if (!empty($product[$imgKey])) {
-            if (file_exists("uploads/" . $product[$imgKey])) $product[$imgKey] = UPLOAD_URL . $product[$imgKey];
-            else $product[$imgKey] = IMGPATH . $product[$imgKey];
-        }
-    }
-
-    // Fetch variants
+    /* ===== VARIANTS ===== */
     $stmt2 = $conn->prepare("
-        SELECT 
-            colour AS color,
-            size,
-            hsn,
-            sale_price,
-            sku_code,
-            weight,
-            qty
-        FROM product_detail_description
+        SELECT id, colour, size, sku_code, sale_price, qty
+        FROM product_detail_description 
         WHERE product_id=?
     ");
-    $stmt2->bind_param("i", $product_id);
+    $stmt2->bind_param("i", $productid);
     $stmt2->execute();
     $res2 = $stmt2->get_result();
 
     $variants = [];
     while ($row = $res2->fetch_assoc()) {
-        $variants[] = $row;
+        $variants[] = [
+            "id" => $row["id"],
+            "colour" => $row["colour"],
+            "size" => $row["size"],
+            "sku_code" => $row["sku_code"],
+            "sale_price" => $row["sale_price"],
+            "qty" => $row["qty"]
+        ];
     }
 
     echo json_encode([
         "status" => "success",
-        "data" => [
-            "product" => $product,
-            "variants" => $variants
-        ]
+        "product" => $product,
+        "variants" => $variants
     ]);
     exit;
 }
-/* ================= INVALID ACTION ================= */
-echo json_encode(["status" => "error", "message" => "Invalid Action"]);
+
+/* ================= ADD / UPDATE PRODUCT ================= */
+if ($action == "add" || $action == "update_product") {
+
+    // 🔥 FIX: accept both
+    $productid = intval($input['product_id'] ?? $input['productid'] ?? 0);
+
+    $item_name = $input['item_name'] ?? '';
+    $subtitle = $input['subtitle'] ?? '';
+    $category = $input['category'] ?? '';
+
+    if (empty($item_name) || empty($vendor_id)) {
+        echo json_encode(["status" => "error", "message" => "Required fields missing"]);
+        exit;
+    }
+
+    if ($action == "add") {
+
+        $stmt = $conn->prepare("
+            INSERT INTO products
+            (item_name, subtitle, category, verified, rejected, hide, vendor_id)
+            VALUES (?, ?, ?, 0, 0, 'N', ?)
+        ");
+        $stmt->bind_param("sssi", $item_name, $subtitle, $category, $vendor_id);
+        $stmt->execute();
+
+        echo json_encode([
+            "status" => "success",
+            "productid" => $conn->insert_id
+        ]);
+
+    } else {
+
+        $stmt = $conn->prepare("
+            UPDATE products
+            SET item_name=?, subtitle=?, category=?
+            WHERE productid=? AND vendor_id=?
+        ");
+        $stmt->bind_param("sssii", $item_name, $subtitle, $category, $productid, $vendor_id);
+        $stmt->execute();
+
+        echo json_encode([
+            "status" => "success",
+            "productid" => $productid
+        ]);
+    }
+
+    exit;
+}
+
+/* ================= UPDATE VARIANTS ================= */
+if ($action == "update_variants") {
+
+    $product_id = intval($input["product_id"] ?? 0);
+    $variants = $input["variants"] ?? [];
+
+    if ($product_id == 0) {
+        echo json_encode(["status" => "error", "message" => "Product ID Missing"]);
+        exit;
+    }
+
+    // 🔥 DELETE OLD
+    $del = $conn->prepare("DELETE FROM product_detail_description WHERE product_id=?");
+    $del->bind_param("i", $product_id);
+    $del->execute();
+
+    // 🔥 INSERT NEW
+    foreach ($variants as $v) {
+
+        $colour = trim($v["colour"] ?? '');
+        $size = trim($v["size"] ?? '');
+        $sku = trim($v["sku_code"] ?? '');
+        $price = floatval($v["sale_price"] ?? 0);
+        $qty = intval($v["qty"] ?? 0);
+
+        if ($colour == '' || $size == '' || $sku == '') continue;
+
+        $stmt = $conn->prepare("
+            INSERT INTO product_detail_description
+            (product_id, colour, size, sku_code, sale_price, qty)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
+
+        $stmt->bind_param("isssdi", $product_id, $colour, $size, $sku, $price, $qty);
+        $stmt->execute();
+    }
+
+    echo json_encode([
+        "status" => "success",
+        "message" => "Variants Saved Successfully"
+    ]);
+    exit;
+}
+
+/* ================= DELETE / RESTORE ================= */
+if ($action == "delete" || $action == "restore") {
+
+    $productid = intval($input['productid'] ?? 0);
+
+    if (empty($productid)) {
+        echo json_encode(["status" => "error", "message" => "Product ID Missing"]);
+        exit;
+    }
+
+    $hide = ($action == "delete") ? "Y" : "N";
+
+    $stmt = $conn->prepare("
+        UPDATE products 
+        SET hide=? 
+        WHERE productid=? AND vendor_id=?
+    ");
+    $stmt->bind_param("sii", $hide, $productid, $vendor_id);
+    $stmt->execute();
+
+    echo json_encode(["status" => "success", "message" => "Done"]);
+    exit;
+}
+
+/* ================= DEFAULT ================= */
+echo json_encode([
+    "status" => "error",
+    "message" => "Invalid Action"
+]);
+
 $conn->close();
 ?>
