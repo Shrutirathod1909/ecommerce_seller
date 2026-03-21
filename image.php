@@ -8,7 +8,7 @@ require_once "db.php";
 /* ================= CONFIG ================= */
 
 // Absolute folder path (VERY IMPORTANT)
-$target_dir = __DIR__ . "/uploads/";
+$target_dir = "uploads/";
 
 // Create folder if not exists
 if (!file_exists($target_dir)) {
