@@ -7,8 +7,8 @@ require_once "db.php";
 
 /* ================= CONFIG ================= */
 
-// Absolute folder path (VERY IMPORTANT)
-$target_dir = "uploads/";
+// ✅ ABSOLUTE PATH (VERY IMPORTANT)
+$target_dir = __DIR__ . "/uploads/";
 
 // Create folder if not exists
 if (!file_exists($target_dir)) {
@@ -29,7 +29,7 @@ if (!$productid) {
     exit;
 }
 
-// Allow only image1 to image12
+// Validate index (1 to 12)
 if ($imageIndex < 1 || $imageIndex > 12) {
     echo json_encode([
         "status" => "error",
@@ -50,17 +50,40 @@ if (!isset($_FILES['image'])) {
     exit;
 }
 
-// Allowed extensions
-$allowed = ['jpg', 'jpeg', 'png', 'webp'];
+// ✅ MIME TYPE CHECK (SECURE)
+$finfo = finfo_open(FILEINFO_MIME_TYPE);
+$mime = finfo_file($finfo, $_FILES['image']['tmp_name']);
 
-$ext = strtolower(pathinfo($_FILES['image']['name'], PATHINFO_EXTENSION));
+// Allowed image types
+$allowedMime = [
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif',
+    'image/heic',
+    'image/heif',
+    'image/avif'
+];
 
-if (!in_array($ext, $allowed)) {
+if (!in_array($mime, $allowedMime)) {
     echo json_encode([
         "status" => "error",
-        "message" => "Invalid image type"
+        "message" => "Invalid image type: " . $mime
     ]);
     exit;
+}
+
+/* ================= EXTENSION FIX ================= */
+
+switch ($mime) {
+    case 'image/jpeg': $ext = 'jpg'; break;
+    case 'image/png': $ext = 'png'; break;
+    case 'image/webp': $ext = 'webp'; break;
+    case 'image/gif': $ext = 'gif'; break;
+    case 'image/heic': $ext = 'heic'; break;
+    case 'image/heif': $ext = 'heif'; break;
+    case 'image/avif': $ext = 'avif'; break;
+    default: $ext = 'jpg';
 }
 
 /* ================= SAVE IMAGE ================= */
@@ -68,22 +91,20 @@ if (!in_array($ext, $allowed)) {
 // Generate unique filename
 $image_name = uniqid("img_") . "." . $ext;
 
-// Full path
+// Full path (SERVER)
 $target_file = $target_dir . $image_name;
 
-// Debug (optional)
-error_log("Uploading file to: " . $target_file);
-
-// Move file
+// Move uploaded file
 if (!move_uploaded_file($_FILES['image']['tmp_name'], $target_file)) {
     echo json_encode([
         "status" => "error",
-        "message" => "Image upload failed"
+        "message" => "Image upload failed",
+        "path" => $target_file
     ]);
     exit;
 }
 
-/* ================= UPDATE DATABASE ================= */
+/* ================= DATABASE UPDATE ================= */
 
 $sql = "UPDATE products SET $column=? WHERE productid=?";
 $stmt = $conn->prepare($sql);
@@ -110,7 +131,7 @@ if (!$stmt->execute()) {
 
 echo json_encode([
     "status" => "success",
-    "image" => UPLOAD_URL . $image_name, // ✅ FULL URL
+    "image" => UPLOAD_URL . $image_name, // FULL URL
     "column" => $column,
     "message" => "Image uploaded successfully"
 ]);
