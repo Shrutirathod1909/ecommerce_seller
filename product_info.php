@@ -8,7 +8,7 @@ $productid = $data['productid'] ?? 0;
 
 /* ---------- products table fields ---------- */
 
-$vendor_id = $data['manufacturer'] ?? 0; // manufacturer = vendor_id
+// manufacturer = vendor_id
 $weight = $data['weight'] ?? '';
 $height = $data['height'] ?? '';
 $width = $data['width'] ?? '';
@@ -27,7 +27,7 @@ $sale_price = $data['sale_price'] ?? 0;
 /* ---------- Update products table ---------- */
 
 $sql1 = "UPDATE products SET
-vendor_id=?,
+
 weight=?,
 height=?,
 width=?,
@@ -38,8 +38,8 @@ WHERE productid=?";
 
 $stmt1 = $conn->prepare($sql1);
 $stmt1->bind_param(
-    "isssssi",
-    $vendor_id,
+    "sssssi",
+    
     $weight,
     $height,
     $width,

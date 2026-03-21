@@ -179,13 +179,7 @@ if ($action == "add" || $action == "update_product") {
     $category = trim($input['category'] ?? '');
 
     // ✅ VALIDATION
-    if ($vendor_id == 0) {
-        echo json_encode([
-            "status"=>"error",
-            "message"=>"Vendor ID missing"
-        ]);
-        exit;
-    }
+   
 
     if ($item_name == '') {
         echo json_encode([
