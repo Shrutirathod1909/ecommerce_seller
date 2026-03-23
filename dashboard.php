@@ -44,7 +44,7 @@ $dashboard = [
     "total_products" => 0,
     "top_products" => [],
 
-    // ✅ STOCK FIELDS
+    // STOCK FIELDS
     "total_stock" => 0,
     "out_of_stock" => 0,
     "low_stock" => 0
@@ -99,7 +99,6 @@ $stmt2->execute();
 $result2 = $stmt2->get_result();
 
 $top_products = [];
-
 while ($row2 = $result2->fetch_assoc()) {
     $top_products[] = [
         "product_id" => $row2['productid'],
@@ -108,28 +107,22 @@ while ($row2 = $result2->fetch_assoc()) {
         "total_qty" => intval($row2['total_qty'])
     ];
 }
-
 $dashboard["top_products"] = $top_products;
 $stmt2->close();
 
-/* ================= STOCK DETAILS ================= */
+/* ================= STOCK DETAILS (ONLY APPROVED PRODUCTS) ================= */
 $sql3 = "
 SELECT 
-    SUM(CAST(stock_count AS UNSIGNED)) AS total_stock,
-
-    SUM(CASE 
-        WHEN CAST(stock_count AS UNSIGNED) = 0 THEN 1 
-        ELSE 0 
-    END) AS out_of_stock,
-
-    SUM(CASE 
-        WHEN CAST(stock_count AS UNSIGNED) > 0 
-         AND CAST(stock_count AS UNSIGNED) <= 5 THEN 1 
-        ELSE 0 
-    END) AS low_stock
-
-FROM product_stock   -- 🔥 change if your table name is different
-WHERE created_by = ?
+    SUM(CAST(ps.avl_qty AS UNSIGNED)) AS total_stock,
+    SUM(CASE WHEN CAST(ps.avl_qty AS UNSIGNED) = 0 THEN 1 ELSE 0 END) AS out_of_stock,
+    SUM(CASE WHEN CAST(ps.avl_qty AS UNSIGNED) > 0 
+             AND CAST(ps.avl_qty AS UNSIGNED) <= 5 THEN 1 ELSE 0 END) AS low_stock
+FROM product_detail_description ps
+JOIN products p ON ps.product_id = p.productid
+WHERE p.vendor_id = ? 
+  AND p.verified = 1 
+  AND p.rejected = 0 
+  AND p.hide = 'N'
 ";
 
 $stmt3 = $conn->prepare($sql3);
@@ -142,7 +135,6 @@ if ($row3 = $result3->fetch_assoc()) {
     $dashboard["out_of_stock"] = intval($row3['out_of_stock'] ?? 0);
     $dashboard["low_stock"] = intval($row3['low_stock'] ?? 0);
 }
-
 $stmt3->close();
 
 /* ================= OUTPUT ================= */
