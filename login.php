@@ -4,7 +4,6 @@ ini_set('display_errors', 1);
 
 header("Content-Type: application/json");
 require_once "db.php";
-$debug = false; 
 
 $raw = file_get_contents("php://input");
 $data = json_decode($raw, true);
@@ -24,7 +23,7 @@ if(empty($email) || empty($password)){
     exit;
 }
 
-$stmt = $conn->prepare("SELECT id,email_id,password,company_name FROM vendors WHERE email_id=?");
+$stmt = $conn->prepare("SELECT id,email_id,password,company_name,company_id FROM vendors WHERE email_id=?");
 
 if(!$stmt){
     echo json_encode([
@@ -52,27 +51,23 @@ if($result->num_rows > 0){
             "vendor"=>[
                 "vendor_id"=>$vendor['id'],
                 "email"=>$vendor['email_id'],
-                 "company_name"=>$vendor['company_name']
-                
+                "company_name"=>$vendor['company_name'],
+                "company_id"=>$vendor['company_id'] // ✅ FIX
             ]
         ]);
 
     }else{
-
         echo json_encode([
             "status"=>"error",
             "message"=>"Invalid password"
         ]);
-
     }
 
 }else{
-
     echo json_encode([
         "status"=>"error",
         "message"=>"Email not registered"
     ]);
-
 }
 
 $stmt->close();

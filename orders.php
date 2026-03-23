@@ -2,6 +2,9 @@
 header("Content-Type: application/json");
 header("Access-Control-Allow-Origin: *");
 
+// ✅ INDIA TIMEZONE
+date_default_timezone_set("Asia/Kolkata");
+
 require_once "db.php";
 
 $action = $_GET['action'] ?? '';
@@ -13,10 +16,10 @@ if ($action == "list") {
 
     $company_name = $_GET['company_name'] ?? '';
 
-    if($company_name == ""){
+    if ($company_name == "") {
         echo json_encode([
-            "status"=>"error",
-            "message"=>"Company name missing"
+            "status" => "error",
+            "message" => "Company name missing"
         ]);
         exit;
     }
@@ -41,21 +44,21 @@ if ($action == "list") {
         ORDER BY id DESC
     ");
 
-    $stmt->bind_param("s",$company_name);
+    $stmt->bind_param("s", $company_name);
     $stmt->execute();
 
     $result = $stmt->get_result();
 
     $orders = [];
 
-    while($row = $result->fetch_assoc()){
+    while ($row = $result->fetch_assoc()) {
         $orders[] = $row;
     }
 
     echo json_encode([
-        "status"=>"success",
-        "count"=>count($orders),
-        "data"=>$orders
+        "status" => "success",
+        "count" => count($orders),
+        "data" => $orders
     ]);
 }
 
@@ -65,43 +68,57 @@ if ($action == "list") {
 elseif ($action == "update_status") {
 
     $order_id = $_POST['order_id'] ?? '';
-    $status = $_POST['status'] ?? '';
+    $status   = $_POST['status'] ?? '';
+    $reason   = $_POST['reason'] ?? '';
 
-    if($order_id=="" || $status==""){
+    if ($order_id == "" || $status == "") {
         echo json_encode([
-            "status"=>"error",
-            "message"=>"Missing data"
+            "status" => "error",
+            "message" => "Missing data"
         ]);
         exit;
     }
 
-    if($status == "shipped"){
+    // ✅ CURRENT IST TIME
+$currentTime = new DateTime("now", new DateTimeZone("Asia/Kolkata"));
+$currentTime = $currentTime->format("Y-m-d H:i:s");
 
-        $query = "UPDATE ecommerce_orders
-                  SET approved='shipped',
-                      dispatched='1',
-                      dispatched_on=NOW(),
-                      modified_on=NOW()
-                  WHERE order_id='$order_id'";
+    if ($status == "shipped") {
+
+        $stmt = $conn->prepare("
+            UPDATE ecommerce_orders
+            SET approved = ?,
+                dispatched = '1',
+                dispatched_on = ?,
+                modified_on = ?
+            WHERE order_id = ?
+        ");
+
+        $stmt->bind_param("ssss", $status, $currentTime, $currentTime, $order_id);
 
     } else {
 
-        $query = "UPDATE ecommerce_orders
-                  SET approved='$status',
-                      approved_on=NOW(),
-                      modified_on=NOW()
-                  WHERE order_id='$order_id'";
+        $stmt = $conn->prepare("
+            UPDATE ecommerce_orders
+            SET approved = ?,
+                approved_on = ?,
+                modified_on = ?
+            WHERE order_id = ?
+        ");
+
+        $stmt->bind_param("ssss", $status, $currentTime, $currentTime, $order_id);
     }
 
-    if(mysqli_query($conn,$query)){
+    if ($stmt->execute()) {
         echo json_encode([
-            "status"=>"success",
-            "message"=>"Order updated"
+            "status" => "success",
+            "message" => "Order updated",
+            "time" => $currentTime   // 🔥 helpful for frontend
         ]);
     } else {
         echo json_encode([
-            "status"=>"error",
-            "message"=>"Update failed"
+            "status" => "error",
+            "message" => "Update failed"
         ]);
     }
 }
@@ -113,26 +130,38 @@ elseif ($action == "details") {
 
     $order_id = $_GET['order_id'] ?? '';
 
-    $query = "SELECT * FROM ecommerce_orders WHERE order_id='$order_id'";
-    $result = mysqli_query($conn,$query);
+    if ($order_id == "") {
+        echo json_encode([
+            "status" => "error",
+            "message" => "Order ID missing"
+        ]);
+        exit;
+    }
 
-    $order = mysqli_fetch_assoc($result);
+    $stmt = $conn->prepare("
+        SELECT * FROM ecommerce_orders WHERE order_id = ?
+    ");
+
+    $stmt->bind_param("s", $order_id);
+    $stmt->execute();
+
+    $result = $stmt->get_result();
+    $order = $result->fetch_assoc();
 
     echo json_encode([
-        "status"=>"success",
-        "order"=>$order
+        "status" => "success",
+        "order" => $order
     ]);
 }
 
 /* ===============================
-   INVALID
+   INVALID ACTION
 ================================ */
-else{
+else {
 
     echo json_encode([
-        "status"=>"error",
-        "message"=>"Invalid action"
+        "status" => "error",
+        "message" => "Invalid action"
     ]);
-
 }
 ?>
