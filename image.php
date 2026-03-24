@@ -7,10 +7,8 @@ require_once "db.php";
 
 /* ================= CONFIG ================= */
 
-// ✅ ABSOLUTE PATH (VERY IMPORTANT)
 $target_dir = __DIR__ . "/uploads/";
 
-// Create folder if not exists
 if (!file_exists($target_dir)) {
     mkdir($target_dir, 0777, true);
 }
@@ -18,7 +16,7 @@ if (!file_exists($target_dir)) {
 /* ================= INPUT ================= */
 
 $productid = $_POST['productid'] ?? '';
-$imageIndex = intval($_POST['image_index'] ?? 1);
+$imageIndex = intval($_POST['image_index'] ?? 0);
 
 // Validate product ID
 if (!$productid) {
@@ -29,7 +27,55 @@ if (!$productid) {
     exit;
 }
 
-// Validate index (1 to 12)
+/* ========================================================= */
+/* ================= 🔥 FETCH IMAGES ======================== */
+/* ========================================================= */
+
+if (!isset($_FILES['image'])) {
+
+    $sql = "SELECT 
+    image1, image2, image3, image4, image5, image6,
+    image7, image8, image9, image10, image11, image12
+    FROM products WHERE productid=?";
+
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("i", $productid);
+    $stmt->execute();
+
+    $result = $stmt->get_result();
+
+    if ($row = $result->fetch_assoc()) {
+
+        $images = [];
+
+        for ($i = 1; $i <= 12; $i++) {
+            $col = "image" . $i;
+
+            if (!empty($row[$col])) {
+                $images[] = UPLOAD_URL . $row[$col];
+            }
+        }
+
+        echo json_encode([
+            "status" => "success",
+            "images" => $images
+        ]);
+
+    } else {
+        echo json_encode([
+            "status" => "error",
+            "message" => "No product found"
+        ]);
+    }
+
+    exit;
+}
+
+/* ========================================================= */
+/* ================= 🔥 UPLOAD IMAGE ======================== */
+/* ========================================================= */
+
+// Validate index
 if ($imageIndex < 1 || $imageIndex > 12) {
     echo json_encode([
         "status" => "error",
@@ -40,21 +86,11 @@ if ($imageIndex < 1 || $imageIndex > 12) {
 
 $column = "image" . $imageIndex;
 
-/* ================= IMAGE CHECK ================= */
+/* ================= MIME CHECK ================= */
 
-if (!isset($_FILES['image'])) {
-    echo json_encode([
-        "status" => "error",
-        "message" => "No image received"
-    ]);
-    exit;
-}
-
-// ✅ MIME TYPE CHECK (SECURE)
 $finfo = finfo_open(FILEINFO_MIME_TYPE);
 $mime = finfo_file($finfo, $_FILES['image']['tmp_name']);
 
-// Allowed image types
 $allowedMime = [
     'image/jpeg',
     'image/png',
@@ -73,7 +109,7 @@ if (!in_array($mime, $allowedMime)) {
     exit;
 }
 
-/* ================= EXTENSION FIX ================= */
+/* ================= EXTENSION ================= */
 
 switch ($mime) {
     case 'image/jpeg': $ext = 'jpg'; break;
@@ -86,54 +122,39 @@ switch ($mime) {
     default: $ext = 'jpg';
 }
 
-/* ================= SAVE IMAGE ================= */
+/* ================= SAVE FILE ================= */
 
-// Generate unique filename
 $image_name = uniqid("img_") . "." . $ext;
-
-// Full path (SERVER)
 $target_file = $target_dir . $image_name;
 
-// Move uploaded file
 if (!move_uploaded_file($_FILES['image']['tmp_name'], $target_file)) {
     echo json_encode([
         "status" => "error",
-        "message" => "Image upload failed",
-        "path" => $target_file
+        "message" => "Upload failed"
     ]);
     exit;
 }
 
-/* ================= DATABASE UPDATE ================= */
+/* ================= UPDATE DB ================= */
 
 $sql = "UPDATE products SET $column=? WHERE productid=?";
 $stmt = $conn->prepare($sql);
-
-if (!$stmt) {
-    echo json_encode([
-        "status" => "error",
-        "message" => $conn->error
-    ]);
-    exit;
-}
-
 $stmt->bind_param("si", $image_name, $productid);
 
 if (!$stmt->execute()) {
     echo json_encode([
         "status" => "error",
-        "message" => "Database update failed"
+        "message" => "DB update failed"
     ]);
     exit;
 }
 
-/* ================= SUCCESS RESPONSE ================= */
+/* ================= SUCCESS ================= */
 
 echo json_encode([
     "status" => "success",
-    "image" => UPLOAD_URL . $image_name, // FULL URL
-    "column" => $column,
-    "message" => "Image uploaded successfully"
+    "image" => UPLOAD_URL . $image_name,
+    "column" => $column
 ]);
 
 $conn->close();
