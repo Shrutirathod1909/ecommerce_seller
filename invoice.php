@@ -127,6 +127,13 @@ LIMIT 1
 $stmt3->execute();
 $company = $stmt3->get_result()->fetch_assoc();
 
+/* ================= FIX site_logo ================= */
+if (!empty($company['site_logo'])) {
+    $company['site_logo'] =IMGPATH . ltrim($company['site_logo'], '/');
+} else {
+    $company['site_logo'] = ''; // fallback if empty
+}
+
 /* ================= FINAL RESPONSE ================= */
 echo json_encode([
  "status"=>"success",
