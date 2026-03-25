@@ -439,6 +439,81 @@ if ($action == "update_variants") {
     exit;
 }
 
+/* ================= APPROVE PRODUCT + ADD STOCK ================= */
+if ($action == "approve_product") {
+
+    $productid = intval($input['productid'] ?? 0);
+
+    if ($productid <= 0) {
+        echo json_encode([
+            "status" => "error",
+            "message" => "Invalid product ID"
+        ]);
+        exit;
+    }
+
+    // ✅ Approve the product
+    $stmt = $conn->prepare("
+        UPDATE products 
+        SET verified=1, rejected=0 
+        WHERE productid=?
+    ");
+    $stmt->bind_param("i", $productid);
+    $stmt->execute();
+
+    // ✅ Fetch variants safely
+    $stmtVar = $conn->prepare("
+        SELECT sku_code, COALESCE(qty, 0) AS qty, COALESCE(size,'') AS size
+        FROM product_detail_description 
+        WHERE product_id=?
+    ");
+    $stmtVar->bind_param("i", $productid);
+    $stmtVar->execute();
+    $variants = $stmtVar->get_result();
+
+    if ($variants->num_rows == 0) {
+        echo json_encode([
+            "status" => "error",
+            "message" => "No variants found"
+        ]);
+        exit;
+    }
+
+    while ($v = $variants->fetch_assoc()) {
+
+        // ✅ Extract SKU, Size, and Qty correctly
+        $sku  = trim($v['sku_code']);
+        $size = trim($v['size']);
+        $qty  = (int)$v['qty'];
+
+        if (empty($sku) || $qty <= 0) continue;
+
+        // ✅ Check if stock already exists
+        $checkStmt = $conn->prepare("
+            SELECT id FROM product_stock
+            WHERE product_id=? AND skucode=?
+        ");
+        $checkStmt->bind_param("is", $productid, $sku);
+        $checkStmt->execute();
+        $check = $checkStmt->get_result();
+
+        if ($check->num_rows == 0) {
+            $stmt2 = $conn->prepare("
+                INSERT INTO product_stock
+                (product_id, skucode, size, stock_count, created_on, active)
+                VALUES (?, ?, ?, ?, NOW(), 1)
+            ");
+            $stmt2->bind_param("issi", $productid, $sku, $size, $qty);
+            $stmt2->execute();
+        }
+    }
+
+    echo json_encode([
+        "status" => "success",
+        "message" => "Product Approved & Stock Added"
+    ]);
+    exit;
+}
 /* ================= DELETE / RESTORE ================= */
 if ($action == "delete" || $action == "restore") {
     $productid = intval($input['productid'] ?? 0);

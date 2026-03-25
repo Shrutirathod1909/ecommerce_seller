@@ -88,7 +88,7 @@ street = '".esc($conn, $_POST['street'])."',
 landmark = '".esc($conn, $_POST['landmark'])."',
 city = '".esc($conn, $_POST['city'])."',
 state = '".esc($conn, $_POST['state'])."',
-statecode = '".esc($conn, $_POST['statecode'])."',
+
 pincode = '".esc($conn, $_POST['pincode'])."',
 country = '".esc($conn, $_POST['country'])."',
 

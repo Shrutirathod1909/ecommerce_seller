@@ -44,10 +44,7 @@ $dashboard = [
     "total_products" => 0,
     "top_products" => [],
 
-    // STOCK FIELDS
-    "total_stock" => 0,
-    "out_of_stock" => 0,
-    "low_stock" => 0
+   
 ];
 
 /* ================= PRODUCT STATUS ================= */
@@ -110,32 +107,6 @@ while ($row2 = $result2->fetch_assoc()) {
 $dashboard["top_products"] = $top_products;
 $stmt2->close();
 
-/* ================= STOCK DETAILS (ONLY APPROVED PRODUCTS) ================= */
-$sql3 = "
-SELECT 
-    SUM(CAST(ps.avl_qty AS UNSIGNED)) AS total_stock,
-    SUM(CASE WHEN CAST(ps.avl_qty AS UNSIGNED) = 0 THEN 1 ELSE 0 END) AS out_of_stock,
-    SUM(CASE WHEN CAST(ps.avl_qty AS UNSIGNED) > 0 
-             AND CAST(ps.avl_qty AS UNSIGNED) <= 5 THEN 1 ELSE 0 END) AS low_stock
-FROM product_detail_description ps
-JOIN products p ON ps.product_id = p.productid
-WHERE p.vendor_id = ? 
-  AND p.verified = 1 
-  AND p.rejected = 0 
-  AND p.hide = 'N'
-";
-
-$stmt3 = $conn->prepare($sql3);
-$stmt3->bind_param("i", $vendor_id);
-$stmt3->execute();
-$result3 = $stmt3->get_result();
-
-if ($row3 = $result3->fetch_assoc()) {
-    $dashboard["total_stock"] = intval($row3['total_stock'] ?? 0);
-    $dashboard["out_of_stock"] = intval($row3['out_of_stock'] ?? 0);
-    $dashboard["low_stock"] = intval($row3['low_stock'] ?? 0);
-}
-$stmt3->close();
 
 /* ================= OUTPUT ================= */
 echo json_encode($dashboard);
