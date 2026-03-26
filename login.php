@@ -23,7 +23,11 @@ if(empty($email) || empty($password)){
     exit;
 }
 
-$stmt = $conn->prepare("SELECT id,email_id,password,company_name,company_id FROM vendors WHERE email_id=?");
+$stmt = $conn->prepare("
+    SELECT id, email_id, password, company_name, company_id, approved, hide 
+    FROM vendors 
+    WHERE email_id=? AND approved='yes' AND hide='N'
+");
 
 if(!$stmt){
     echo json_encode([
@@ -52,7 +56,7 @@ if($result->num_rows > 0){
                 "vendor_id"=>$vendor['id'],
                 "email"=>$vendor['email_id'],
                 "company_name"=>$vendor['company_name'],
-                "company_id"=>$vendor['company_id'] // ✅ FIX
+                "company_id"=>$vendor['company_id']
             ]
         ]);
 
@@ -64,9 +68,10 @@ if($result->num_rows > 0){
     }
 
 }else{
+
     echo json_encode([
         "status"=>"error",
-        "message"=>"Email not registered"
+        "message"=>"Account not approved or blocked / Email not registered"
     ]);
 }
 
