@@ -154,6 +154,225 @@ elseif ($action == "details") {
     ]);
 }
 
+
+/* ===============================
+   ADD TO CART
+================================ */
+elseif($action == "seller_cart") {
+
+    $company_id = $_GET['company_id'] ?? '';
+    $from_date  = $_GET['from_date'] ?? '';
+    $to_date    = $_GET['to_date'] ?? '';
+
+    if($company_id == "") {
+        echo json_encode([
+            "status" => "error",
+            "message" => "Company ID missing"
+        ]);
+        exit;
+    }
+
+    $query = "
+        SELECT 
+            c.cart_id,
+            c.userid,
+            c.productid,
+            MAX(c.quantity) AS quantity,
+            c.unit_price,
+            c.total_price,
+            c.final_amount,
+            c.gst_percentage,
+            c.shipping_price,
+            c.disc_amt,
+            c.status,
+            c.created_on,
+            l.fullname AS customer_name,
+            p.item_name AS item_name
+        FROM cart c
+        LEFT JOIN login l ON c.userid = l.userid
+        LEFT JOIN products p ON c.productid = p.productid
+        WHERE p.company_id = ? AND c.status='Added in cart'
+    ";
+
+    $params = [$company_id];
+    $types = "s";
+
+    if ($from_date != "") {
+        $query .= " AND DATE(c.created_on) >= ?";
+        $params[] = $from_date;
+        $types .= "s";
+    }
+
+    if ($to_date != "") {
+        $query .= " AND DATE(c.created_on) <= ?";
+        $params[] = $to_date;
+        $types .= "s";
+    }
+
+    $query .= " GROUP BY c.userid, c.productid ORDER BY c.created_on DESC";
+
+    $stmt = $conn->prepare($query);
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $carts = [];
+    while($row = $result->fetch_assoc()) {
+        $carts[] = $row;
+    }
+
+    echo json_encode([
+        "status" => "success",
+        "count" => count($carts),
+        "data" => $carts
+    ]);
+}
+
+
+elseif($action == "seller_wishlist") {
+
+    $company_id = $_GET['company_id'] ?? '';
+    $from_date  = $_GET['from_date'] ?? '';
+    $to_date    = $_GET['to_date'] ?? '';
+
+    if($company_id == "") {
+        echo json_encode([
+            "status" => "error",
+            "message" => "Company ID missing"
+        ]);
+        exit;
+    }
+
+    $query = "
+        SELECT 
+            MIN(w.id) AS wishlist_id,
+            w.userid,
+            w.productid,
+            MAX(w.quantity) AS quantity,
+            w.unit_price,
+            w.total_price,
+            w.final_amount,
+            w.status,
+            w.created_on,
+            l.fullname AS customer_name,
+            p.item_name
+        FROM wishlist w
+        LEFT JOIN login l ON w.userid = l.userid
+        LEFT JOIN products p ON w.productid = p.productid
+        WHERE p.company_id = ? AND w.status='Created'
+    ";
+
+    $params = [$company_id];
+    $types = "s";
+
+    if ($from_date != "") {
+        $query .= " AND DATE(w.created_on) >= ?";
+        $params[] = $from_date;
+        $types .= "s";
+    }
+
+    if ($to_date != "") {
+        $query .= " AND DATE(w.created_on) <= ?";
+        $params[] = $to_date;
+        $types .= "s";
+    }
+
+    $query .= " GROUP BY w.userid, w.productid ORDER BY w.created_on DESC";
+
+    $stmt = $conn->prepare($query);
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $wishlists = [];
+    while($row = $result->fetch_assoc()) {
+        $wishlists[] = $row;
+    }
+
+    echo json_encode([
+        "status" => "success",
+        "count" => count($wishlists),
+        "data" => $wishlists
+    ]);
+}
+
+
+
+/* ===============================
+   ORDER DETAILS (RECEIVED / FAILED)
+================================ */
+elseif($action == "order_details_list") {
+
+    $company_id = $_GET['company_id'] ?? '';
+    $type       = $_GET['type'] ?? ''; // received / failed
+    $from_date  = $_GET['from_date'] ?? '';
+    $to_date    = $_GET['to_date'] ?? '';
+
+    if($company_id == "" || $type == "") {
+        echo json_encode([
+            "status" => "error",
+            "message" => "Missing parameters"
+        ]);
+        exit;
+    }
+
+    $query = "
+        SELECT 
+            fo.id,
+            fo.order_id,
+            fo.status,
+            fo.created_on,
+            p.item_name,
+            l.fullname AS customer_name
+        FROM fulfill_orders fo
+        INNER JOIN products p ON fo.product_id = p.productid
+        LEFT JOIN login l ON fo.created_by = l.userid
+        WHERE p.company_id = ?
+    ";
+
+    $params = [$company_id];
+    $types = "s";
+
+    // ✅ TYPE FILTER
+    if ($type == "received") {
+        $query .= " AND LOWER(fo.status) IN ('order received','order placed')";
+    } else if ($type == "failed") {
+        $query .= " AND LOWER(fo.status) IN ('failed','canceled','cancelled','pickup cancelled')";
+    }
+
+    // ✅ DATE FILTER
+    if ($from_date != "") {
+        $query .= " AND DATE(fo.created_on) >= ?";
+        $params[] = $from_date;
+        $types .= "s";
+    }
+
+    if ($to_date != "") {
+        $query .= " AND DATE(fo.created_on) <= ?";
+        $params[] = $to_date;
+        $types .= "s";
+    }
+
+    $query .= " ORDER BY fo.created_on DESC";
+
+    $stmt = $conn->prepare($query);
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $data = [];
+    while($row = $result->fetch_assoc()) {
+        $data[] = $row;
+    }
+
+    echo json_encode([
+        "status" => "success",
+        "count" => count($data),
+        "data" => $data
+    ]);
+}
+
+
 /* ===============================
    INVALID ACTION
 ================================ */
