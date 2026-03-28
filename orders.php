@@ -157,78 +157,124 @@ elseif ($action == "details") {
 
 /* ===============================
    ADD TO CART
-================================ */
-elseif($action == "seller_cart") {
+   ===================*/
+elseif($action == "seller_cart_active") {
 
     $company_id = $_GET['company_id'] ?? '';
     $from_date  = $_GET['from_date'] ?? '';
     $to_date    = $_GET['to_date'] ?? '';
 
-    if($company_id == "") {
-        echo json_encode([
-            "status" => "error",
-            "message" => "Company ID missing"
-        ]);
-        exit;
-    }
-
     $query = "
-        SELECT 
-            c.cart_id,
-            c.userid,
-            c.productid,
-            MAX(c.quantity) AS quantity,
-            c.unit_price,
-            c.total_price,
-            c.final_amount,
-            c.gst_percentage,
-            c.shipping_price,
-            c.disc_amt,
-            c.status,
-            c.created_on,
-            l.fullname AS customer_name,
-            p.item_name AS item_name
-        FROM cart c
-        LEFT JOIN login l ON c.userid = l.userid
-        LEFT JOIN products p ON c.productid = p.productid
-        WHERE p.company_id = ? AND c.status='Added in cart'
+    SELECT 
+    MIN(c.cart_id) AS cart_id,
+    c.userid,
+    c.productid,
+    MAX(c.quantity) AS quantity,
+    MAX(c.status) AS status,
+    MAX(c.created_on) AS created_on,
+    l.fullname AS customer_name,
+    p.item_name
+FROM cart c
+INNER JOIN products p ON c.productid = p.productid
+INNER JOIN login l ON c.userid = l.userid
+WHERE p.company_id = ?
+AND c.status = 'Added in cart'
+GROUP BY c.userid, c.productid
     ";
 
-    $params = [$company_id];
-    $types = "s";
-
-    if ($from_date != "") {
-        $query .= " AND DATE(c.created_on) >= ?";
-        $params[] = $from_date;
-        $types .= "s";
+    if (!empty($from_date) && !empty($to_date)) {
+        $query .= " AND DATE(c.created_on) BETWEEN ? AND ? ";
     }
 
-    if ($to_date != "") {
-        $query .= " AND DATE(c.created_on) <= ?";
-        $params[] = $to_date;
-        $types .= "s";
-    }
-
-    $query .= " GROUP BY c.userid, c.productid ORDER BY c.created_on DESC";
+    $query .= " ORDER BY c.created_on DESC";
 
     $stmt = $conn->prepare($query);
-    $stmt->bind_param($types, ...$params);
+
+    if (!empty($from_date) && !empty($to_date)) {
+        $stmt->bind_param("sss", $company_id, $from_date, $to_date);
+    } else {
+        $stmt->bind_param("s", $company_id);
+    }
+
     $stmt->execute();
     $result = $stmt->get_result();
 
-    $carts = [];
+    $data = [];
     while($row = $result->fetch_assoc()) {
-        $carts[] = $row;
+        $row['cart_type'] = "Active Cart 🟢";
+        $data[] = $row;
     }
 
     echo json_encode([
         "status" => "success",
-        "count" => count($carts),
-        "data" => $carts
+        "count" => count($data),
+        "data" => $data
     ]);
 }
 
+elseif($action == "seller_cart_abandoned") {
 
+    $company_id = $_GET['company_id'] ?? '';
+    $from_date  = $_GET['from_date'] ?? '';
+    $to_date    = $_GET['to_date'] ?? '';
+
+    $query = "
+        SELECT 
+    MIN(c.cart_id) AS cart_id,
+    c.userid,
+    c.productid,
+    MAX(c.quantity) AS quantity,
+    MAX(c.status) AS status,
+    MAX(c.created_on) AS created_on,
+    l.fullname AS customer_name,
+    p.item_name
+FROM cart c
+LEFT JOIN products p ON c.productid = p.productid
+LEFT JOIN login l ON c.userid = l.userid
+WHERE p.company_id = ?
+AND c.status = 'deleted'
+GROUP BY c.userid, c.productid
+    ";
+
+    if (!empty($from_date) && !empty($to_date)) {
+        $query .= " AND DATE(c.created_on) BETWEEN ? AND ? ";
+    }
+
+    $query .= " GROUP BY c.userid, c.productid ORDER BY created_on DESC";
+
+    $stmt = $conn->prepare($query);
+
+    if (!empty($from_date) && !empty($to_date)) {
+        $stmt->bind_param("sss", $company_id, $from_date, $to_date);
+    } else {
+        $stmt->bind_param("s", $company_id);
+    }
+
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $data = [];
+    while($row = $result->fetch_assoc()) {
+
+        $data[] = [
+            "cart_id" => $row["cart_id"],
+            "userid" => $row["userid"],
+            "productid" => $row["productid"],
+            "quantity" => $row["quantity"],
+            "status" => $row["status"],
+            "created_on" => $row["created_on"],
+            "customer_name" => $row["customer_name"],
+            "item_name" => $row["item_name"],
+            "cart_type" => "Abandoned Cart 🔴"
+        ];
+    }
+
+    echo json_encode([
+        "status" => "success",
+        "count" => count($data),
+        "data" => $data
+    ]);
+}
 elseif($action == "seller_wishlist") {
 
     $company_id = $_GET['company_id'] ?? '';
@@ -316,19 +362,23 @@ elseif($action == "order_details_list") {
         exit;
     }
 
-    $query = "
-        SELECT 
-            fo.id,
-            fo.order_id,
-            fo.status,
-            fo.created_on,
-            p.item_name,
-            l.fullname AS customer_name
-        FROM fulfill_orders fo
-        INNER JOIN products p ON fo.product_id = p.productid
-        LEFT JOIN login l ON fo.created_by = l.userid
-        WHERE p.company_id = ?
-    ";
+$query = "
+    SELECT 
+        fo.id,
+        fo.order_id,
+        fo.status,
+        fo.created_on,
+        p.item_name,
+        l.fullname AS customer_name
+    FROM fulfill_orders fo
+    INNER JOIN products p ON fo.product_id = p.productid
+    LEFT JOIN (
+        SELECT userid, MAX(fullname) as fullname
+        FROM login
+        GROUP BY userid
+    ) l ON fo.created_by = l.userid
+    WHERE p.company_id = ?
+";
 
     $params = [$company_id];
     $types = "s";
@@ -364,10 +414,13 @@ elseif($action == "order_details_list") {
     while($row = $result->fetch_assoc()) {
         $data[] = $row;
     }
+    // ✅ UNIQUE ORDER COUNT FIX
+$orderIds = array_column($data, 'order_id');   // all order_ids
+$uniqueOrders = array_unique($orderIds); 
 
     echo json_encode([
         "status" => "success",
-        "count" => count($data),
+        "count" => count($uniqueOrders),
         "data" => $data
     ]);
 }
