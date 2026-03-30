@@ -7,7 +7,8 @@ require_once "db.php";
 
 /* ================= CONFIG ================= */
 
-$target_dir = __DIR__ . "/uploads/";
+$target_dir = __DIR__ . "/productgallery/";
+$base_path = "productgallery/";
 
 if (!file_exists($target_dir)) {
     mkdir($target_dir, 0777, true);
@@ -18,7 +19,8 @@ if (!file_exists($target_dir)) {
 $productid = $_POST['productid'] ?? '';
 $imageIndex = intval($_POST['image_index'] ?? 0);
 
-// Validate product ID
+/* ================= VALIDATION ================= */
+
 if (!$productid) {
     echo json_encode([
         "status" => "error",
@@ -28,15 +30,15 @@ if (!$productid) {
 }
 
 /* ========================================================= */
-/* ================= 🔥 FETCH IMAGES ======================== */
+/* ================= 🔥 FETCH IMAGES ======================= */
 /* ========================================================= */
 
 if (!isset($_FILES['image'])) {
 
     $sql = "SELECT 
-    image1, image2, image3, image4, image5, image6,
-    image7, image8, image9, image10, image11, image12
-    FROM products WHERE productid=?";
+        image1, image2, image3, image4, image5, image6,
+        image7, image8, image9, image10, image11, image12
+        FROM products WHERE productid=?";
 
     $stmt = $conn->prepare($sql);
     $stmt->bind_param("i", $productid);
@@ -52,7 +54,7 @@ if (!isset($_FILES['image'])) {
             $col = "image" . $i;
 
             if (!empty($row[$col])) {
-                $images[] = UPLOAD_URL . $row[$col];
+                $images[] = IMGPATH . $row[$col]; // 🔥 from db.php
             }
         }
 
@@ -72,10 +74,9 @@ if (!isset($_FILES['image'])) {
 }
 
 /* ========================================================= */
-/* ================= 🔥 UPLOAD IMAGE ======================== */
+/* ================= 🔥 UPLOAD IMAGE ======================= */
 /* ========================================================= */
 
-// Validate index
 if ($imageIndex < 1 || $imageIndex > 12) {
     echo json_encode([
         "status" => "error",
@@ -135,11 +136,15 @@ if (!move_uploaded_file($_FILES['image']['tmp_name'], $target_file)) {
     exit;
 }
 
+/* ================= DB PATH ================= */
+
+$db_path = $base_path . $image_name;
+
 /* ================= UPDATE DB ================= */
 
 $sql = "UPDATE products SET $column=? WHERE productid=?";
 $stmt = $conn->prepare($sql);
-$stmt->bind_param("si", $image_name, $productid);
+$stmt->bind_param("si", $db_path, $productid);
 
 if (!$stmt->execute()) {
     echo json_encode([
@@ -153,7 +158,7 @@ if (!$stmt->execute()) {
 
 echo json_encode([
     "status" => "success",
-    "image" => UPLOAD_URL . $image_name,
+    "image" => IMGPATH . $db_path,
     "column" => $column
 ]);
 
