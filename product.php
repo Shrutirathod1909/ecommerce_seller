@@ -39,6 +39,7 @@ function normalizeImageUrl($image) {
 if ($action == "show") {
     $status = $input['status'] ?? $_GET['status'] ?? "approved";
 
+    // Build WHERE clause
     if ($status == "approved") $where = "p.verified=1 AND p.rejected=0 AND p.hide='N'";
     else if ($status == "pending") $where = "p.verified=0 AND p.rejected=0 AND p.hide='N'";
     else if ($status == "rejected") $where = "p.rejected=1 AND p.hide='N'";
@@ -47,21 +48,24 @@ if ($action == "show") {
 
     if (!empty($vendor_id)) $where .= " AND p.vendor_id = $vendor_id";
 
-    $sql = "SELECT 
-                p.productid,
-                p.item_name,
-                p.subtitle,
-                p.category,
-                p.image1,
-                MAX(v.sku_code) as sku,
-                COALESCE(SUM(v.qty),0) as stock,
-                COALESCE(MAX(v.sale_price),0) as sale_price
-            FROM products p
-            LEFT JOIN product_detail_description v 
-            ON p.productid = v.product_id
-            WHERE $where
-            GROUP BY p.productid
-            ORDER BY p.productid DESC";
+    // Fetch products with aggregated stock and sale_price
+    $sql = "
+    SELECT 
+        p.productid,
+        p.item_name,
+        p.subtitle,
+        p.category,
+        p.image1,
+        MAX(pdd.sku_code) AS sku,
+        COALESCE(SUM(CAST(pdd.qty AS UNSIGNED)), 0) AS stock,
+        COALESCE(MAX(pdd.sale_price), 0) AS sale_price
+    FROM products p
+    LEFT JOIN product_detail_description pdd
+        ON p.productid = pdd.product_id
+    WHERE $where
+    GROUP BY p.productid
+    ORDER BY p.productid DESC
+    ";
 
     $result = $conn->query($sql);
     $products = [];
@@ -69,12 +73,28 @@ if ($action == "show") {
     while ($row = $result->fetch_assoc()) {
         $row['image1'] = normalizeImageUrl($row['image1']);
         $products[] = $row;
+
+        // Update product_stock table
+        $productId = $row['productid'];
+        $stockCount = $row['stock'];
+        $sku = $row['sku'];
+
+        $check = $conn->query("SELECT id FROM product_stock WHERE product_id = $productId");
+        if ($check->num_rows > 0) {
+            // Update existing stock
+            $conn->query("UPDATE product_stock 
+                          SET stock_count = $stockCount, skucode='$sku' 
+                          WHERE product_id = $productId");
+        } else {
+            // Insert new stock record
+            $conn->query("INSERT INTO product_stock (product_id, stock_count, skucode) 
+                          VALUES ($productId, $stockCount, '$sku')");
+        }
     }
 
-    echo json_encode(["status"=>"success","data"=>$products]);
+    echo json_encode(["status" => "success", "data" => $products]);
     exit;
 }
-
 /* ================= SHOW VARIANTS ================= */
 if ($action == "show_variants") {
 

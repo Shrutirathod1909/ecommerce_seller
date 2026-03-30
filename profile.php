@@ -35,6 +35,7 @@ if($action == "update"){
 
     $stmt = $conn->prepare("UPDATE vendors SET
         vendor_name=?,
+          vendor_code=?,
         business_type=?,
         pancard_no=?,
         contactable_person=?,
@@ -49,8 +50,9 @@ if($action == "update"){
         WHERE id=?");
 
     $stmt->bind_param(
-        "sssssssssssss",
+        "ssssssssssssss",
         $data['vendor_name'],
+            $data['vendor_code'],
         $data['business_type'],
         $data['pancard_no'],
         $data['contactable_person'],

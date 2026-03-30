@@ -219,7 +219,7 @@ elseif($action == "seller_cart_abandoned") {
     $to_date    = $_GET['to_date'] ?? '';
 
     $query = "
-        SELECT 
+SELECT 
     MIN(c.cart_id) AS cart_id,
     c.userid,
     c.productid,
@@ -233,14 +233,13 @@ LEFT JOIN products p ON c.productid = p.productid
 LEFT JOIN login l ON c.userid = l.userid
 WHERE p.company_id = ?
 AND c.status = 'deleted'
-GROUP BY c.userid, c.productid
-    ";
+";
 
-    if (!empty($from_date) && !empty($to_date)) {
-        $query .= " AND DATE(c.created_on) BETWEEN ? AND ? ";
-    }
+if (!empty($from_date) && !empty($to_date)) {
+    $query .= " AND DATE(c.created_on) BETWEEN ? AND ? ";
+}
 
-    $query .= " GROUP BY c.userid, c.productid ORDER BY created_on DESC";
+$query .= " GROUP BY c.userid, c.productid ORDER BY c.created_on DESC";
 
     $stmt = $conn->prepare($query);
 
@@ -255,18 +254,8 @@ GROUP BY c.userid, c.productid
 
     $data = [];
     while($row = $result->fetch_assoc()) {
-
-        $data[] = [
-            "cart_id" => $row["cart_id"],
-            "userid" => $row["userid"],
-            "productid" => $row["productid"],
-            "quantity" => $row["quantity"],
-            "status" => $row["status"],
-            "created_on" => $row["created_on"],
-            "customer_name" => $row["customer_name"],
-            "item_name" => $row["item_name"],
-            "cart_type" => "Abandoned Cart 🔴"
-        ];
+        $row['cart_type'] = "Abandoned Cart 🔴";
+        $data[] = $row;
     }
 
     echo json_encode([
