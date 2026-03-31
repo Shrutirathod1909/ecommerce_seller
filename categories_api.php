@@ -157,7 +157,7 @@ if ($action == "childcategory") {
 ================================ */
 if ($action == "unitmeasurement") {
 
-   $sql = "SELECT DISTINCT unit_measurment 
+   $sql = "SELECT DISTINCT unit_measurment, symbol 
            FROM um 
            ORDER BY unit_measurment ASC";
 
@@ -168,8 +168,9 @@ if ($action == "unitmeasurement") {
 
    while ($row = mysqli_fetch_assoc($result)) {
       $data[] = [
-         "id"   => $i++,   // FIX: generated id
-         "name" => $row['unit_measurment']
+         "id"     => $i++,
+         "name"   => $row['unit_measurment'],
+         "symbol" => $row['symbol']   // ✅ ADD THIS
       ];
    }
 

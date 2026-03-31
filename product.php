@@ -223,7 +223,7 @@ if ($action == "add" || $action == "update_product") {
 
     $weight = $input['weight'] ?? '';
     $hsn = $input['hsn'] ?? '';
-    $unit = $input['unit'] ?? ''; // ✅ FIX
+    $symbol = $input['symbol'] ?? ''; // ✅ FIX
     $country_of_origin = $input['country_of_origin'] ?? '';
     $product_description = $input['product_description'] ?? '';
 
@@ -242,51 +242,52 @@ if ($action == "add" || $action == "update_product") {
     if ($action == "add") {
 
         $stmt = $conn->prepare("
-            INSERT INTO products (
-                item_name,
-                subtitle,
-                category,
-                primary_categories_name,
-                subcategory,
-                child_category,
-                gender,
-                payment_method,
-                gst_type,
-                weight,
-                hsn,
-               
-                country_of_origin,
-                product_description,
-                verified,
-                rejected,
-                hide,
-                vendor_id,
-                company_id,
-                created_on
-            )
-            VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'N', ?, ?, NOW()
-            )
+           INSERT INTO products (
+    item_name,
+    subtitle,
+    category,
+    primary_categories_name,
+    subcategory,
+    child_category,
+    gender,
+    payment_method,
+    gst_type,
+    weight,
+    hsn,
+    symbol, -- ✅ use this
+    country_of_origin,
+    product_description,
+    verified,
+    rejected,
+    hide,
+    vendor_id,
+    company_id,
+    created_on
+)
+VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'N', ?, ?, NOW()
+)
         ");
 
         $stmt->bind_param(
-            "sssssssssssssii",
-            $item_name,
-            $subtitle,
-            $category,
-            $primary_categories_name,
-            $subcategory,
-            $child_category,
-            $gender,
-            $payment_method,
-            $gst_type,
-            $weight,
-            $hsn,
-            $country_of_origin,
-            $product_description,
-            $vendor_id,
-            $company_id
-        );
+    "ssssssssssssssii",
+    $item_name,
+    $subtitle,
+    $category,
+    $primary_categories_name,
+    $subcategory,
+    $child_category,
+    $gender,
+    $payment_method,
+    $gst_type,
+    $weight,
+    $hsn,
+    $symbol, // ✅ here
+    $country_of_origin,
+    $product_description,
+    $vendor_id,
+    $company_id
+);
 
         if ($stmt->execute()) {
             echo json_encode([
@@ -320,6 +321,7 @@ if ($action == "add" || $action == "update_product") {
                 gst_type = ?,
                 weight = ?,
                 hsn = ?,
+                symbol = ?,
                 country_of_origin = ?,
                 product_description = ?,
                 vendor_id = ?,
@@ -329,24 +331,25 @@ if ($action == "add" || $action == "update_product") {
         ");
 
         $stmt->bind_param(
-            "sssssssssssssiii",
-            $item_name,
-            $subtitle,
-            $category,
-            $primary_categories_name,
-            $subcategory,
-            $child_category,
-            $gender,
-            $payment_method,
-            $gst_type,
-            $weight,
-            $hsn,
-            $country_of_origin,
-            $product_description,
-            $vendor_id,
-            $company_id,
-            $productid
-        );
+    "sssssssssssssssii",
+    $item_name,
+    $subtitle,
+    $category,
+    $primary_categories_name,
+    $subcategory,
+    $child_category,
+    $gender,
+    $payment_method,
+    $gst_type,
+    $weight,
+    $hsn,
+    $symbol, // ✅ here
+    $country_of_origin,
+    $product_description,
+    $vendor_id,
+    $company_id,
+    $productid
+);
 
         if ($stmt->execute()) {
             echo json_encode([
@@ -366,6 +369,7 @@ if ($action == "add" || $action == "update_product") {
 }
 
 /* ================= ADD VARIANTS (NO DELETE) ================= */
+
 if ($action == "update_variants") {
 
     $product_id = intval($input["product_id"] ?? 0);
@@ -397,7 +401,7 @@ if ($action == "update_variants") {
         if ($price < 0) $price = 0;
         if ($qty < 0) $qty = 0;
 
-        // ================= UPDATE =================
+        /* ================= UPDATE ================= */
         if ($id > 0) {
 
             $incoming_ids[] = $id;
@@ -408,8 +412,9 @@ if ($action == "update_variants") {
                 WHERE id=? AND product_id=?
             ");
 
+            // ✅ FIXED binding
             $stmt->bind_param(
-                "sssdiis",
+                "sssdiii",
                 $colour,
                 $size,
                 $sku,
@@ -425,8 +430,8 @@ if ($action == "update_variants") {
             }
 
         } else {
-            // ================= INSERT =================
 
+            /* ================= INSERT ================= */
             $stmt = $conn->prepare("
                 INSERT INTO product_detail_description
                 (product_id, colour, size, sku_code, sale_price, qty)
@@ -452,8 +457,8 @@ if ($action == "update_variants") {
         }
     }
 
-    // ================= DELETE REMOVED VARIANTS =================
-    if (count($incoming_ids) > 0) {
+    /* ================= DELETE REMOVED ================= */
+    if (!empty($incoming_ids)) {
 
         $ids_str = implode(",", $incoming_ids);
 
@@ -470,6 +475,7 @@ if ($action == "update_variants") {
     ]);
     exit;
 }
+
 /* ================= DELETE / RESTORE ================= */
 if ($action == "delete" || $action == "restore") {
     $productid = intval($input['productid'] ?? 0);
