@@ -14,9 +14,9 @@ if ($conn->connect_error) {
 
 // ❌ DO NOT echo anything here
 
-define('IMGPATH', 'https://orozone.in/cms/');
-define('UPLOADPATH', 'https://orozone.in/seller_api/');
-define('UPLOAD_URL', 'https://orozone.in/seller_api/uploads/');
+define('IMGPATH', 'https://orozone.in/uatcms/');
+// define('UPLOADPATH', 'https://orozone.in/seller_api/');
+// define('UPLOAD_URL', 'https://orozone.in/seller_api/uploads/');
 
 //  define('UPLOAD_URL', 'http://192.168.1.39/e-seller/uploads/');
 //  define('UPLOADPATH', 'http://192.168.1.39/e-seller/');

@@ -17,12 +17,12 @@ function normalizeImageUrl($image) {
         return IMGPATH . $image;
     }
 
-    if (strpos($image, 'uploads/') === 0) {
-        return UPLOAD_URL . substr($image, 8);
-    }
+//     if (strpos($image, 'uploads/') === 0) {
+//         return UPLOAD_URL . substr($image, 8);
+//     }
 
-    return UPLOAD_URL . $image;
-}
+//     return UPLOAD_URL . $image;
+ }
 
 // ================= GET METHOD =================
 if ($_SERVER['REQUEST_METHOD'] === "GET") {

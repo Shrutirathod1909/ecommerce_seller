@@ -19,20 +19,17 @@ function normalizeImageUrl($image) {
     if (empty($image)) return '';
 
     $image = ltrim($image, '/');
-
-    // Product gallery images
-    if (strpos($image, 'productgallery/') === 0) {
-        return IMGPATH . $image;
-    }
+    return IMGPATH . $image;
+}
 
     // Uploads folder images
-    if (strpos($image, 'uploads/') === 0) {
-        return UPLOAD_URL . substr($image, 8); // remove 'uploads/' if already present
-    }
+    // if (strpos($image, 'uploads/') === 0) {
+    //     return UPLOAD_URL . substr($image, 8); // remove 'uploads/' if already present
+    // }
 
-    // Default fallback
-    return UPLOAD_URL . $image;
-}
+    // // Default fallback
+    // return UPLOAD_URL . $image;
+
 
 
 /* ================= SHOW PRODUCTS ================= */
@@ -379,67 +376,97 @@ if ($action == "update_variants") {
         exit;
     }
 
-    if (!is_array($variants) || count($variants) == 0) {
-        echo json_encode(["status"=>"error","message"=>"No variants provided"]);
+    if (!is_array($variants)) {
+        echo json_encode(["status"=>"error","message"=>"Invalid variants"]);
         exit;
     }
 
+    $incoming_ids = [];
+
     foreach ($variants as $v) {
 
+        $id     = intval($v["id"] ?? 0);
         $colour = trim($v["colour"] ?? '');
         $size   = trim($v["size"] ?? '');
         $sku    = trim($v["sku_code"] ?? '');
         $price  = floatval($v["sale_price"] ?? 0);
         $qty    = intval($v["qty"] ?? 0);
 
-        // ❌ HARD VALIDATION (VERY IMPORTANT)
-        if ($sku == '') continue;     // must skip empty SKU
-        if ($price <= 0) $price = 0;
+        if ($sku == '') continue;
+
+        if ($price < 0) $price = 0;
         if ($qty < 0) $qty = 0;
 
-        // ✅ prevent duplicates
-        $check = $conn->prepare("
-            SELECT id FROM product_detail_description 
-            WHERE product_id=? AND sku_code=?
-            LIMIT 1
-        ");
-        $check->bind_param("is", $product_id, $sku);
-        $check->execute();
-        $res = $check->get_result();
+        // ================= UPDATE =================
+        if ($id > 0) {
 
-        if ($res->num_rows > 0) {
-            continue;
+            $incoming_ids[] = $id;
+
+            $stmt = $conn->prepare("
+                UPDATE product_detail_description
+                SET colour=?, size=?, sku_code=?, sale_price=?, qty=?
+                WHERE id=? AND product_id=?
+            ");
+
+            $stmt->bind_param(
+                "sssdiis",
+                $colour,
+                $size,
+                $sku,
+                $price,
+                $qty,
+                $id,
+                $product_id
+            );
+
+            if (!$stmt->execute()) {
+                echo json_encode(["status"=>"error","message"=>$stmt->error]);
+                exit;
+            }
+
+        } else {
+            // ================= INSERT =================
+
+            $stmt = $conn->prepare("
+                INSERT INTO product_detail_description
+                (product_id, colour, size, sku_code, sale_price, qty)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ");
+
+            $stmt->bind_param(
+                "isssdi",
+                $product_id,
+                $colour,
+                $size,
+                $sku,
+                $price,
+                $qty
+            );
+
+            if ($stmt->execute()) {
+                $incoming_ids[] = $stmt->insert_id;
+            } else {
+                echo json_encode(["status"=>"error","message"=>$stmt->error]);
+                exit;
+            }
         }
+    }
 
-        // ✅ INSERT ONLY CLEAN DATA
-        $stmt = $conn->prepare("
-            INSERT INTO product_detail_description
-            (product_id, colour, size, sku_code, sale_price, qty)
-            VALUES (?, ?, ?, ?, ?, ?)
+    // ================= DELETE REMOVED VARIANTS =================
+    if (count($incoming_ids) > 0) {
+
+        $ids_str = implode(",", $incoming_ids);
+
+        $conn->query("
+            DELETE FROM product_detail_description
+            WHERE product_id=$product_id
+            AND id NOT IN ($ids_str)
         ");
-
-        $stmt->bind_param(
-            "isssdi",
-            $product_id,
-            $colour,
-            $size,
-            $sku,
-            $price,
-            $qty
-        );
-
-        if (!$stmt->execute()) {
-            echo json_encode([
-                "status"=>"error",
-                "message"=>$stmt->error
-            ]);
-            exit;
-        }
     }
 
     echo json_encode([
         "status"=>"success",
-        "message"=>"Variants Updated Successfully"
+        "message"=>"Variants Synced Successfully"
     ]);
     exit;
 }

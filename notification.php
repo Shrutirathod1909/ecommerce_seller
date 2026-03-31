@@ -41,63 +41,27 @@ if ($action == "approve_vendor") {
 }
 
 /* ================= NOTIFICATION COUNT ================= */
-if ($action == "notification_count") {
-
-    $company_name = $_GET['company_name'] ?? "";
-
-    if ($company_name == "") {
-        echo json_encode(["status" => "error"]);
-        exit;
-    }
-
-    $sql = "
-    SELECT COUNT(*) as total FROM (
-
-        SELECT id
-        FROM ecommerce_orders
-        WHERE company_name='$company_name'
-        AND approved='pending'
-        AND hide='N'
-
-        UNION
-
-        SELECT productid
-        FROM products
-        WHERE company_id IN (
-            SELECT company_id FROM vendors WHERE company_name='$company_name'
-        )
-        AND hide='N'
-        AND (verified='1' OR rejected='1')
-
-    ) as combined
-    ";
-
-    $res = $conn->query($sql);
-    $count = (int)($res->fetch_assoc()['total'] ?? 0);
-
-    echo json_encode([
-        "status" => "success",
-        "count" => $count
-    ]);
-    exit;
-}
-
-/* ================= NOTIFICATION LIST ================= */
 if ($action == "notification_list") {
 
     $company_name = $_GET['company_name'] ?? "";
 
     if ($company_name == "") {
-        echo json_encode(["status" => "error", "message" => "Company name required"]);
+        echo json_encode([
+            "status" => "error",
+            "message" => "Company name required"
+        ]);
         exit;
     }
 
+    $company_name = $conn->real_escape_string($company_name);
+
     $sql = "
     SELECT * FROM (
+
         /* ================= ORDER ================= */
         SELECT 
-            CONCAT('O-', eo.id) AS unique_id,
-            eo.id,
+            CONCAT('O-', MAX(eo.id)) AS unique_id,
+            MAX(eo.id) AS id,
             eo.order_id,
             eo.product_name,
             eo.customer_name,
@@ -108,13 +72,14 @@ if ($action == "notification_list") {
         WHERE eo.company_name = '$company_name'
         AND eo.approved = 'pending'
         AND eo.hide = 'N'
+        GROUP BY DATE_FORMAT(eo.order_date, '%Y-%m-%d %H:%i')
 
-        UNION ALL
+        UNION
 
         /* ================= PRODUCT ================= */
         SELECT 
-            CONCAT('P-', p.productid) AS unique_id,
-            p.productid AS id,
+            CONCAT('P-', MAX(p.productid)) AS unique_id,
+            MAX(p.productid) AS id,
             '' AS order_id,
             p.item_name AS product_name,
             '' AS customer_name,
@@ -130,11 +95,12 @@ if ($action == "notification_list") {
         )
         AND p.hide = 'N'
         AND (p.verified = '1' OR p.rejected = '1')
+        GROUP BY DATE_FORMAT(p.created_on, '%Y-%m-%d %H:%i')
 
     ) AS all_notifications
 
-    GROUP BY unique_id
     ORDER BY order_date DESC
+    LIMIT 100
     ";
 
     $result = $conn->query($sql);
@@ -158,4 +124,73 @@ if ($action == "notification_list") {
     ]);
     exit;
 }
+
+
+/* =========================================================
+   🔔 NOTIFICATION COUNT (ONLY NEW)
+========================================================= */
+if ($action == "notification_count") {
+
+    $company_name = $_GET['company_name'] ?? "";
+    $last_seen = $_GET['last_seen'] ?? 0;
+
+    if ($company_name == "") {
+        echo json_encode([
+            "status" => "error",
+            "message" => "Company name required"
+        ]);
+        exit;
+    }
+
+    $company_name = $conn->real_escape_string($company_name);
+    $last_seen = intval($last_seen);
+
+    $sql = "
+    SELECT COUNT(*) as total FROM (
+
+        /* ORDER */
+        SELECT MAX(eo.id) AS id
+        FROM ecommerce_orders eo
+        WHERE eo.company_name = '$company_name'
+        AND eo.approved = 'pending'
+        AND eo.hide = 'N'
+        AND eo.order_date > FROM_UNIXTIME($last_seen / 1000)
+        GROUP BY DATE_FORMAT(eo.order_date, '%Y-%m-%d %H:%i')
+
+        UNION
+
+        /* PRODUCT */
+        SELECT MAX(p.productid) AS id
+        FROM products p
+        WHERE p.company_id IN (
+            SELECT company_id FROM vendors WHERE company_name = '$company_name'
+        )
+        AND p.hide = 'N'
+        AND (p.verified = '1' OR p.rejected = '1')
+        AND p.created_on > FROM_UNIXTIME($last_seen / 1000)
+        GROUP BY DATE_FORMAT(p.created_on, '%Y-%m-%d %H:%i')
+
+    ) AS new_notifications
+    ";
+
+    $result = $conn->query($sql);
+
+    if (!$result) {
+        echo json_encode([
+            "status" => "error",
+            "message" => "SQL Error: " . $conn->error
+        ]);
+        exit;
+    }
+
+    $row = $result->fetch_assoc();
+
+    echo json_encode([
+        "status" => "success",
+        "count" => $row['total'] ?? 0
+    ]);
+    exit;
+}
+
+
 ?>
