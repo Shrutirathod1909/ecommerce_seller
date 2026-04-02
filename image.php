@@ -7,16 +7,18 @@ require_once "db.php";
 
 /* ================= CONFIG ================= */
 
-$target_dir = __DIR__ . "/productgallery/";
-$base_path = "productgallery/";
+// ✅ SAFE PATH (CMS is in root as per your screenshot)
+$target_dir = $_SERVER['DOCUMENT_ROOT'] . "productgallery/";
+$base_path  = "productgallery/";
 
+// create folder if not exists
 if (!file_exists($target_dir)) {
     mkdir($target_dir, 0777, true);
 }
 
 /* ================= INPUT ================= */
 
-$productid = $_POST['productid'] ?? '';
+$productid  = $_POST['productid'] ?? '';
 $imageIndex = intval($_POST['image_index'] ?? 0);
 
 /* ================= VALIDATION ================= */
@@ -54,7 +56,7 @@ if (!isset($_FILES['image'])) {
             $col = "image" . $i;
 
             if (!empty($row[$col])) {
-                $images[] = IMGPATH . $row[$col]; // 🔥 from db.php
+                $images[] = IMGPATH . $row[$col];
             }
         }
 
@@ -80,7 +82,7 @@ if (!isset($_FILES['image'])) {
 if ($imageIndex < 1 || $imageIndex > 12) {
     echo json_encode([
         "status" => "error",
-        "message" => "Invalid image index"
+        "message" => "Invalid image index (1-12 allowed)"
     ]);
     exit;
 }
@@ -114,9 +116,9 @@ if (!in_array($mime, $allowedMime)) {
 
 switch ($mime) {
     case 'image/jpeg': $ext = 'jpg'; break;
-    case 'image/png': $ext = 'png'; break;
+    case 'image/png':  $ext = 'png'; break;
     case 'image/webp': $ext = 'webp'; break;
-    case 'image/gif': $ext = 'gif'; break;
+    case 'image/gif':  $ext = 'gif'; break;
     case 'image/heic': $ext = 'heic'; break;
     case 'image/heif': $ext = 'heif'; break;
     case 'image/avif': $ext = 'avif'; break;
@@ -125,7 +127,7 @@ switch ($mime) {
 
 /* ================= SAVE FILE ================= */
 
-$image_name = uniqid("img_") . "." . $ext;
+$image_name  = uniqid("img_") . "." . $ext;
 $target_file = $target_dir . $image_name;
 
 if (!move_uploaded_file($_FILES['image']['tmp_name'], $target_file)) {
@@ -149,7 +151,7 @@ $stmt->bind_param("si", $db_path, $productid);
 if (!$stmt->execute()) {
     echo json_encode([
         "status" => "error",
-        "message" => "DB update failed"
+        "message" => "Database update failed"
     ]);
     exit;
 }
@@ -158,6 +160,7 @@ if (!$stmt->execute()) {
 
 echo json_encode([
     "status" => "success",
+    "message" => "Image uploaded successfully",
     "image" => IMGPATH . $db_path,
     "column" => $column
 ]);

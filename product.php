@@ -51,7 +51,7 @@ if ($action == "show") {
         p.productid,
         p.item_name,
         p.subtitle,
-        p.category,
+        p.primary_categories_name,
         p.image1,
         MAX(pdd.sku_code) AS sku,
         COALESCE(SUM(CAST(pdd.qty AS UNSIGNED)), 0) AS stock,
@@ -184,7 +184,7 @@ if ($action == "get_product") {
 
     // Fetch variants
     $stmt2 = $conn->prepare("
-        SELECT id, colour, size, sku_code, sale_price, qty
+        SELECT id, colour, size, sku_code, cad_price, qty
         FROM product_detail_description 
         WHERE product_id=?
         ORDER BY id ASC
@@ -369,111 +369,133 @@ VALUES (
 }
 
 /* ================= ADD VARIANTS (NO DELETE) ================= */
-
 if ($action == "update_variants") {
 
     $product_id = intval($input["product_id"] ?? 0);
-    $variants = $input["variants"] ?? [];
+    $variants   = $input["variants"] ?? [];
 
     if ($product_id == 0) {
-        echo json_encode(["status"=>"error","message"=>"Product ID Missing"]);
+        echo json_encode(["status" => "error", "message" => "Product ID Missing"]);
         exit;
     }
 
     if (!is_array($variants)) {
-        echo json_encode(["status"=>"error","message"=>"Invalid variants"]);
+        echo json_encode(["status" => "error", "message" => "Invalid variants"]);
         exit;
     }
 
     $incoming_ids = [];
 
-    foreach ($variants as $v) {
+    $conn->begin_transaction();
 
-        $id     = intval($v["id"] ?? 0);
-        $colour = trim($v["colour"] ?? '');
-        $size   = trim($v["size"] ?? '');
-        $sku    = trim($v["sku_code"] ?? '');
-        $price  = floatval($v["sale_price"] ?? 0);
-        $qty    = intval($v["qty"] ?? 0);
+    try {
 
-        if ($sku == '') continue;
+        foreach ($variants as $v) {
 
-        if ($price < 0) $price = 0;
-        if ($qty < 0) $qty = 0;
+            $id     = intval($v["id"] ?? 0);
+            $colour = trim($v["colour"] ?? '');
+            $size   = trim($v["size"] ?? '');
+            $sku    = trim($v["sku_code"] ?? '');
+            $price  = floatval($v["cad_price"] ?? 0);
+            $qty    = intval($v["qty"] ?? 0);
 
-        /* ================= UPDATE ================= */
-        if ($id > 0) {
+            if ($sku === '') continue;
 
-            $incoming_ids[] = $id;
+            if ($price < 0) $price = 0;
+            if ($qty < 0) $qty = 0;
 
-            $stmt = $conn->prepare("
-                UPDATE product_detail_description
-                SET colour=?, size=?, sku_code=?, sale_price=?, qty=?
-                WHERE id=? AND product_id=?
-            ");
+            /* ================= UPDATE ================= */
+            if ($id > 0) {
 
-            // ✅ FIXED binding
-            $stmt->bind_param(
-                "sssdiii",
-                $colour,
-                $size,
-                $sku,
-                $price,
-                $qty,
-                $id,
-                $product_id
-            );
+                $incoming_ids[] = $id;
 
-            if (!$stmt->execute()) {
-                echo json_encode(["status"=>"error","message"=>$stmt->error]);
-                exit;
+                $stmt = $conn->prepare("
+                    UPDATE product_detail_description
+                    SET colour = ?, size = ?, sku_code = ?, cad_price = ?, qty = ?
+                    WHERE id = ? AND product_id = ?
+                ");
+
+                $stmt->bind_param(
+                    "sssdiii",
+                    $colour,
+                    $size,
+                    $sku,
+                    $price,
+                    $qty,
+                    $id,
+                    $product_id
+                );
+
+                if (!$stmt->execute()) {
+                    throw new Exception($stmt->error);
+                }
+
+            } else {
+
+                /* ================= INSERT ================= */
+                $stmt = $conn->prepare("
+                    INSERT INTO product_detail_description
+                    (product_id, colour, size, sku_code, cad_price, qty)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ");
+
+                $stmt->bind_param(
+                    "isssdi",
+                    $product_id,
+                    $colour,
+                    $size,
+                    $sku,
+                    $price,
+                    $qty
+                );
+
+                if (!$stmt->execute()) {
+                    throw new Exception($stmt->error);
+                }
+
+                $incoming_ids[] = $stmt->insert_id;
             }
+        }
+
+        /* ================= DELETE REMOVED ================= */
+
+        if (count($incoming_ids) > 0) {
+
+            $ids_str = implode(",", array_map('intval', $incoming_ids));
+
+            $conn->query("
+                DELETE FROM product_detail_description
+                WHERE product_id = $product_id
+                AND id NOT IN ($ids_str)
+            ");
 
         } else {
 
-            /* ================= INSERT ================= */
-            $stmt = $conn->prepare("
-                INSERT INTO product_detail_description
-                (product_id, colour, size, sku_code, sale_price, qty)
-                VALUES (?, ?, ?, ?, ?, ?)
+            // If no variants sent → delete all
+            $conn->query("
+                DELETE FROM product_detail_description
+                WHERE product_id = $product_id
             ");
-
-            $stmt->bind_param(
-                "isssdi",
-                $product_id,
-                $colour,
-                $size,
-                $sku,
-                $price,
-                $qty
-            );
-
-            if ($stmt->execute()) {
-                $incoming_ids[] = $stmt->insert_id;
-            } else {
-                echo json_encode(["status"=>"error","message"=>$stmt->error]);
-                exit;
-            }
         }
+
+        $conn->commit();
+
+        echo json_encode([
+            "status"  => "success",
+            "message" => "Variants Synced Successfully"
+        ]);
+        exit;
+
+    } catch (Exception $e) {
+
+        $conn->rollback();
+
+        echo json_encode([
+            "status"  => "error",
+            "message" => $e->getMessage()
+        ]);
+        exit;
     }
-
-    /* ================= DELETE REMOVED ================= */
-    if (!empty($incoming_ids)) {
-
-        $ids_str = implode(",", $incoming_ids);
-
-        $conn->query("
-            DELETE FROM product_detail_description
-            WHERE product_id=$product_id
-            AND id NOT IN ($ids_str)
-        ");
-    }
-
-    echo json_encode([
-        "status"=>"success",
-        "message"=>"Variants Synced Successfully"
-    ]);
-    exit;
 }
 
 /* ================= DELETE / RESTORE ================= */

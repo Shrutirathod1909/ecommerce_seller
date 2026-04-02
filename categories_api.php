@@ -1,6 +1,6 @@
 <?php
-error_reporting(0);
-ini_set('display_errors', 0);
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 ob_clean();
 header("Content-Type: application/json");
 
@@ -175,6 +175,64 @@ if ($action == "unitmeasurement") {
    }
 
    echo json_encode(["status" => "success", "data" => $data]);
+   exit;
+}
+
+
+/* ================================
+   PINCODE SEARCH (FIXED)
+================================ */
+if ($action == "pincode_search") {
+
+   $keyword = $_GET['query'] ?? '';
+
+   if (empty($keyword)) {
+      echo json_encode([
+         "status" => "error",
+         "message" => "Query required"
+      ]);
+      exit;
+   }
+
+   $keyword = mysqli_real_escape_string($conn, $keyword);
+
+   $sql = "
+      SELECT id, pincode, area_name, city_name, state_name
+      FROM pincode_list
+      WHERE 
+         pincode LIKE '%$keyword%' OR
+         area_name LIKE '%$keyword%' OR
+         city_name LIKE '%$keyword%'
+      LIMIT 20
+   ";
+
+   $result = mysqli_query($conn, $sql);
+
+   // ✅ ADD THIS (VERY IMPORTANT)
+   if (!$result) {
+      echo json_encode([
+         "status" => "error",
+         "message" => mysqli_error($conn)
+      ]);
+      exit;
+   }
+
+   $data = [];
+
+   while ($row = mysqli_fetch_assoc($result)) {
+      $data[] = [
+         "id" => (int)$row["id"],
+         "pincode" => $row["pincode"],
+         "area" => $row["area_name"],
+         "city" => $row["city_name"],
+         "state" => $row["state_name"]
+      ];
+   }
+
+   echo json_encode([
+      "status" => "success",
+      "data" => $data
+   ]);
    exit;
 }
 
