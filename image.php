@@ -7,8 +7,8 @@ require_once "db.php";
 
 /* ================= CONFIG ================= */
 
-// ✅ SAFE PATH (CMS is in root as per your screenshot)
-$target_dir = $_SERVER['DOCUMENT_ROOT'] . "productgallery/";
+// ✅ CORRECT PATH (IMPORTANT FIX)
+$target_dir = $_SERVER['DOCUMENT_ROOT'] . "/uatcms/productgallery/";
 $base_path  = "productgallery/";
 
 // create folder if not exists

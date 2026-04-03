@@ -34,18 +34,31 @@ function normalizeImageUrl($image) {
 
 /* ================= SHOW PRODUCTS ================= */
 if ($action == "show") {
+
     $status = $input['status'] ?? $_GET['status'] ?? "approved";
 
-    // Build WHERE clause
-    if ($status == "approved") $where = "p.verified=1 AND p.rejected=0 AND p.hide='N'";
-    else if ($status == "pending") $where = "p.verified=0 AND p.rejected=0 AND p.hide='N'";
-    else if ($status == "rejected") $where = "p.rejected=1 AND p.hide='N'";
-    else if ($status == "restore") $where = "p.hide='Y'";
-    else $where = "1";
+    /* ---------- STATUS FILTER ---------- */
 
-    if (!empty($vendor_id)) $where .= " AND p.vendor_id = $vendor_id";
+    if ($status == "approved") {
+        $where = "p.verified=1 AND p.rejected=0 AND p.hide='N'";
+    } else if ($status == "pending") {
+        $where = "p.verified=0 AND p.rejected=0 AND p.hide='N'";
+    } else if ($status == "rejected") {
+        $where = "p.rejected=1 AND p.hide='N'";
+    } else if ($status == "restore") {
+        $where = "p.hide='Y'";
+    } else {
+        $where = "1";
+    }
 
-    // Fetch products with aggregated stock and sale_price
+    /* ---------- VENDOR FILTER ---------- */
+
+    if ($vendor_id > 0) {
+        $where .= " AND p.vendor_id = $vendor_id";
+    }
+
+    /* ================= MAIN QUERY ================= */
+
     $sql = "
     SELECT 
         p.productid,
@@ -53,43 +66,82 @@ if ($action == "show") {
         p.subtitle,
         p.primary_categories_name,
         p.image1,
-        MAX(pdd.sku_code) AS sku,
+
+        MAX(IFNULL(pdd.sku_code,'')) AS sku,
+
         COALESCE(SUM(CAST(pdd.qty AS UNSIGNED)), 0) AS stock,
-        COALESCE(MAX(pdd.sale_price), 0) AS sale_price
+
+        /* ALL PRICES */
+        MAX(pdd.mrp_price) AS mrp_price,
+        MAX(pdd.sale_price) AS sale_price,
+        MAX(pdd.cad_price) AS cad_price,
+
+        /* FINAL PRICE LOGIC */
+        CASE 
+            WHEN LOWER(p.primary_categories_name) LIKE '%cad%' THEN 
+                COALESCE(NULLIF(MAX(pdd.sale_price),0), MAX(pdd.cad_price), 0)
+            ELSE 
+                COALESCE(NULLIF(MAX(pdd.sale_price),0), MAX(pdd.mrp_price), 0)
+        END AS final_price
+
     FROM products p
+
     LEFT JOIN product_detail_description pdd
         ON p.productid = pdd.product_id
+
     WHERE $where
+
     GROUP BY p.productid
+
     ORDER BY p.productid DESC
     ";
 
     $result = $conn->query($sql);
+
     $products = [];
 
     while ($row = $result->fetch_assoc()) {
+
+        /* ---------- IMAGE FIX ---------- */
         $row['image1'] = normalizeImageUrl($row['image1']);
+
         $products[] = $row;
 
-        // Update product_stock table
-        $productId = $row['productid'];
-        $stockCount = $row['stock'];
-        $sku = $row['sku'];
+        /* ================= STOCK TABLE UPDATE ================= */
 
-        $check = $conn->query("SELECT id FROM product_stock WHERE product_id = $productId");
-        if ($check->num_rows > 0) {
-            // Update existing stock
-            $conn->query("UPDATE product_stock 
-                          SET stock_count = $stockCount, skucode='$sku' 
-                          WHERE product_id = $productId");
+        $productId  = intval($row['productid']);
+        $stockCount = intval($row['stock']);
+        $sku        = $conn->real_escape_string($row['sku']);
+
+        $check = $conn->query("
+            SELECT id FROM product_stock 
+            WHERE product_id = $productId
+        ");
+
+        if ($check && $check->num_rows > 0) {
+
+            /* UPDATE */
+            $conn->query("
+                UPDATE product_stock 
+                SET stock_count = $stockCount, skucode = '$sku' 
+                WHERE product_id = $productId
+            ");
+
         } else {
-            // Insert new stock record
-            $conn->query("INSERT INTO product_stock (product_id, stock_count, skucode) 
-                          VALUES ($productId, $stockCount, '$sku')");
+
+            /* INSERT */
+            $conn->query("
+                INSERT INTO product_stock (product_id, stock_count, skucode) 
+                VALUES ($productId, $stockCount, '$sku')
+            ");
         }
     }
 
-    echo json_encode(["status" => "success", "data" => $products]);
+    echo json_encode([
+        "status" => "success",
+        "data"   => $products
+    ]);
+
     exit;
 }
 /* ================= SHOW VARIANTS ================= */
@@ -105,12 +157,34 @@ if ($action == "show_variants") {
         exit;
     }
 
+    /* ================= GET CATEGORY ================= */
+
+    $category = '';
+    $stmtCat = $conn->prepare("
+        SELECT primary_categories_name 
+        FROM products 
+        WHERE productid = ?
+    ");
+    $stmtCat->bind_param("i", $product_id);
+    $stmtCat->execute();
+    $resCat = $stmtCat->get_result();
+
+    if ($rowCat = $resCat->fetch_assoc()) {
+        $category = strtolower($rowCat['primary_categories_name']);
+    }
+
+    $isCad = (strpos($category, "cad") !== false);
+
+    /* ================= GET VARIANTS ================= */
+
     $stmt = $conn->prepare("
         SELECT 
             id,
             IFNULL(colour,'') as colour,
             IFNULL(size,'') as size,
             IFNULL(sku_code,'') as sku_code,
+            IFNULL(cad_price,0) as cad_price,
+            IFNULL(mrp_price,0) as mrp_price,
             IFNULL(sale_price,0) as sale_price,
             IFNULL(qty,0) as qty
         FROM product_detail_description
@@ -125,11 +199,23 @@ if ($action == "show_variants") {
     $variants = [];
 
     while ($row = $result->fetch_assoc()) {
+
+        // 🔥 Optional: For CAD ensure fallback
+        if ($isCad) {
+            if ($row['mrp_price'] == 0) {
+                $row['mrp_price'] = $row['cad_price'];
+            }
+            if ($row['sale_price'] == 0) {
+                $row['sale_price'] = $row['cad_price'];
+            }
+        }
+
         $variants[] = $row;
     }
 
     echo json_encode([
         "status" => "success",
+        "is_cad" => $isCad,
         "data" => $variants
     ]);
 
@@ -368,7 +454,7 @@ VALUES (
     }
 }
 
-/* ================= ADD VARIANTS (NO DELETE) ================= */
+/* ================= UPDATE VARIANTS ================= */
 if ($action == "update_variants") {
 
     $product_id = intval($input["product_id"] ?? 0);
@@ -396,31 +482,36 @@ if ($action == "update_variants") {
             $colour = trim($v["colour"] ?? '');
             $size   = trim($v["size"] ?? '');
             $sku    = trim($v["sku_code"] ?? '');
-            $price  = floatval($v["cad_price"] ?? 0);
             $qty    = intval($v["qty"] ?? 0);
 
-            if ($sku === '') continue;
+            $list_price = floatval($v["list_price"] ?? 0);
 
-            if ($price < 0) $price = 0;
+            if ($list_price < 0) $list_price = 0;
             if ($qty < 0) $qty = 0;
+
+            if ($sku === '') {
+                throw new Exception("SKU is required");
+            }
 
             /* ================= UPDATE ================= */
             if ($id > 0) {
 
-                $incoming_ids[] = $id;
-
                 $stmt = $conn->prepare("
                     UPDATE product_detail_description
-                    SET colour = ?, size = ?, sku_code = ?, cad_price = ?, qty = ?
+                    SET colour = ?, 
+                        size = ?, 
+                        sku_code = ?, 
+                        list_price = ?, 
+                        qty = ?
                     WHERE id = ? AND product_id = ?
                 ");
 
                 $stmt->bind_param(
-                    "sssdiii",
+                    "sssdiis",
                     $colour,
                     $size,
                     $sku,
-                    $price,
+                    $list_price,
                     $qty,
                     $id,
                     $product_id
@@ -430,12 +521,14 @@ if ($action == "update_variants") {
                     throw new Exception($stmt->error);
                 }
 
+                $incoming_ids[] = $id;
+
             } else {
 
                 /* ================= INSERT ================= */
                 $stmt = $conn->prepare("
                     INSERT INTO product_detail_description
-                    (product_id, colour, size, sku_code, cad_price, qty)
+                    (product_id, colour, size, sku_code, list_price, qty)
                     VALUES (?, ?, ?, ?, ?, ?)
                 ");
 
@@ -445,7 +538,7 @@ if ($action == "update_variants") {
                     $colour,
                     $size,
                     $sku,
-                    $price,
+                    $list_price,
                     $qty
                 );
 
@@ -459,19 +552,18 @@ if ($action == "update_variants") {
 
         /* ================= DELETE REMOVED ================= */
 
-        if (count($incoming_ids) > 0) {
+        if (!empty($incoming_ids)) {
 
-            $ids_str = implode(",", array_map('intval', $incoming_ids));
+            $ids = implode(",", array_map('intval', $incoming_ids));
 
             $conn->query("
                 DELETE FROM product_detail_description
                 WHERE product_id = $product_id
-                AND id NOT IN ($ids_str)
+                AND id NOT IN ($ids)
             ");
 
         } else {
 
-            // If no variants sent → delete all
             $conn->query("
                 DELETE FROM product_detail_description
                 WHERE product_id = $product_id
@@ -481,23 +573,21 @@ if ($action == "update_variants") {
         $conn->commit();
 
         echo json_encode([
-            "status"  => "success",
-            "message" => "Variants Synced Successfully"
+            "status" => "success",
+            "message" => "Variants Saved Successfully"
         ]);
-        exit;
 
     } catch (Exception $e) {
-
         $conn->rollback();
 
         echo json_encode([
-            "status"  => "error",
+            "status" => "error",
             "message" => $e->getMessage()
         ]);
-        exit;
     }
-}
 
+    exit;
+}
 /* ================= DELETE / RESTORE ================= */
 if ($action == "delete" || $action == "restore") {
     $productid = intval($input['productid'] ?? 0);

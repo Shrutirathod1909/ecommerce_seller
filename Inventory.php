@@ -1,13 +1,12 @@
 <?php
 header("Content-Type: application/json");
 header("Access-Control-Allow-Origin: *");
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Pragma: no-cache");
 
 include "db.php";
 
-
-
-
-// ================= IMAGE URL FUNCTION =================
+// ================= IMAGE FUNCTION =================
 function normalizeImageUrl($image) {
     if (empty($image)) return '';
 
@@ -17,14 +16,10 @@ function normalizeImageUrl($image) {
         return IMGPATH . $image;
     }
 
-//     if (strpos($image, 'uploads/') === 0) {
-//         return UPLOAD_URL . substr($image, 8);
-//     }
+    return IMGPATH . $image;
+}
 
-//     return UPLOAD_URL . $image;
- }
-
-// ================= GET METHOD =================
+// ================= GET =================
 if ($_SERVER['REQUEST_METHOD'] === "GET") {
 
     $vendor_id = mysqli_real_escape_string($conn, $_GET['vendor_id'] ?? '');
@@ -37,43 +32,53 @@ if ($_SERVER['REQUEST_METHOD'] === "GET") {
     $allProducts = mysqli_query($conn, "SELECT productid FROM products WHERE vendor_id='$vendor_id'");
     while ($p = mysqli_fetch_assoc($allProducts)) {
         $product_id = $p['productid'];
-        $check = mysqli_query($conn, "SELECT 1 FROM product_stock WHERE product_id='$product_id'");
-        if (mysqli_num_rows($check) === 0) {
-            mysqli_query($conn, "INSERT INTO product_stock (product_id, stock_count) VALUES ('$product_id', 0)");
-        }
+
+        mysqli_query($conn, "
+            INSERT INTO product_stock (product_id, stock_count)
+            VALUES ('$product_id', 0)
+            ON DUPLICATE KEY UPDATE product_id=product_id
+        ");
     }
 
     // ================= COUNT =================
-    $count_sql = "SELECT 
-        COUNT(DISTINCT p.productid) AS total_products,
-        SUM(CASE WHEN s.stock_count > 50 THEN 1 ELSE 0 END) AS total_stock,
-        SUM(CASE WHEN s.stock_count = 0 THEN 1 ELSE 0 END) AS out_of_stock,
-        SUM(CASE WHEN s.stock_count BETWEEN 1 AND 4 THEN 1 ELSE 0 END) AS low_stock
-    FROM products p
-    LEFT JOIN (
-        SELECT product_id, MAX(stock_count) AS stock_count
-        FROM product_stock
-        GROUP BY product_id
-    ) s ON p.productid = s.product_id
-    WHERE p.vendor_id='$vendor_id' AND p.hide='N' AND p.verified='1'";
+    $count_sql = "
+        SELECT 
+            COUNT(DISTINCT p.productid) AS total_products,
+            SUM(COALESCE(s.stock_sum,0) > 50) AS total_stock,
+            SUM(COALESCE(s.stock_sum,0) = 0) AS out_of_stock,
+            SUM(COALESCE(s.stock_sum,0) BETWEEN 1 AND 4) AS low_stock
+        FROM products p
+        LEFT JOIN (
+            SELECT product_id, SUM(stock_count) AS stock_sum
+            FROM product_stock
+            GROUP BY product_id
+        ) s ON p.productid = s.product_id
+        WHERE p.vendor_id='$vendor_id'
+        AND p.hide='N'
+        AND p.verified='1'
+    ";
 
     $count_result = mysqli_query($conn, $count_sql);
     $count_data = mysqli_fetch_assoc($count_result);
 
     // ================= LIST =================
-    $sql = "SELECT 
-                p.productid,
-                p.item_name,
-                p.image1,
-                COALESCE(s.stock_count,0) AS stock_count
-            FROM products p
-            LEFT JOIN (
-                SELECT product_id, MAX(stock_count) AS stock_count
-                FROM product_stock
-                GROUP BY product_id
-            ) s ON p.productid = s.product_id
-            WHERE p.vendor_id='$vendor_id' AND p.hide='N' AND p.verified='1'
-            ORDER BY p.productid DESC";
+    $sql = "
+        SELECT 
+            p.productid,
+            p.item_name,
+            p.image1,
+            COALESCE(s.stock_sum,0) AS stock_count
+        FROM products p
+        LEFT JOIN (
+            SELECT product_id, SUM(stock_count) AS stock_sum
+            FROM product_stock
+            GROUP BY product_id
+        ) s ON p.productid = s.product_id
+        WHERE p.vendor_id='$vendor_id'
+        AND p.hide='N'
+        AND p.verified='1'
+        ORDER BY p.productid DESC
+    ";
 
     $result = mysqli_query($conn, $sql);
 
@@ -96,42 +101,65 @@ if ($_SERVER['REQUEST_METHOD'] === "GET") {
     exit;
 }
 
-// ================= POST METHOD =================
+// ================= POST =================
 elseif ($_SERVER['REQUEST_METHOD'] === "POST") {
 
     $action = $_POST['action'] ?? '';
-    $product_id = mysqli_real_escape_string($conn, $_POST['product_id'] ?? '');
+    $product_id = (int)($_POST['product_id'] ?? 0);
     $qty = (int)($_POST['qty'] ?? 1);
 
-    if (empty($product_id)) {
+    if ($product_id == 0) {
         echo json_encode(["status"=>"error","message"=>"product_id required"]);
         exit;
     }
 
-    // Ensure product_stock exists
-    $check = mysqli_query($conn, "SELECT 1 FROM product_stock WHERE product_id='$product_id'");
-    if (mysqli_num_rows($check) === 0) {
-        mysqli_query($conn, "INSERT INTO product_stock (product_id, stock_count) VALUES ('$product_id', 0)");
-    }
+    // Ensure row exists
+    mysqli_query($conn, "
+        INSERT INTO product_stock (product_id, stock_count)
+        VALUES ('$product_id', 0)
+        ON DUPLICATE KEY UPDATE product_id=product_id
+    ");
 
     if ($action === "increase") {
-        $sql = "UPDATE product_stock SET stock_count = stock_count + $qty WHERE product_id='$product_id'";
+        $sql = "
+            UPDATE product_stock 
+            SET stock_count = stock_count + $qty
+            WHERE product_id='$product_id'
+        ";
     } elseif ($action === "decrease") {
-        $sql = "UPDATE product_stock SET stock_count = GREATEST(0, stock_count - $qty) WHERE product_id='$product_id'";
+        $sql = "
+            UPDATE product_stock 
+            SET stock_count = GREATEST(0, stock_count - $qty)
+            WHERE product_id='$product_id'
+        ";
     } else {
         echo json_encode(["status"=>"error","message"=>"invalid action"]);
         exit;
     }
 
     if (mysqli_query($conn, $sql)) {
-        echo json_encode(["status"=>"success"]);
+
+        $res = mysqli_query($conn, "
+            SELECT SUM(stock_count) AS stock_count 
+            FROM product_stock 
+            WHERE product_id='$product_id'
+        ");
+
+        $row = mysqli_fetch_assoc($res);
+
+        echo json_encode([
+            "status" => "success",
+            "product_id" => $product_id,
+            "stock_count" => (int)$row['stock_count']
+        ]);
+
     } else {
         echo json_encode(["status"=>"error","message"=>mysqli_error($conn)]);
     }
+
     exit;
 }
 
-// ================= INVALID METHOD =================
 else {
     echo json_encode(["status"=>"error","message"=>"Invalid request method"]);
 }
