@@ -15,10 +15,10 @@ if ($conn->connect_error) {
 // ❌ DO NOT echo anything here
 
 define('IMGPATH', 'https://orozone.in/uatcms/');
+define('FILEPATH',"https://orozone.in/uatcms/products/")
 //  define('IMGPATH', 'https://orozone.in/uatcms/');
 // define('UPLOAD_URL', 'https://orozone.in/seller_api/uploads/');
 
 //  define('UPLOAD_URL', 'http://192.168.1.39/e-seller/uploads/');
 //  define('UPLOADPATH', 'http://192.168.1.39/e-seller/');
-
 ?>
