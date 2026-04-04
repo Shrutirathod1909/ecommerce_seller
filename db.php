@@ -15,7 +15,6 @@ if ($conn->connect_error) {
 // ❌ DO NOT echo anything here
 
 define('IMGPATH', 'https://orozone.in/uatcms/');
-define('FILEPATH',"https://orozone.in/uatcms/products/")
 //  define('IMGPATH', 'https://orozone.in/uatcms/');
 // define('UPLOAD_URL', 'https://orozone.in/seller_api/uploads/');
 
