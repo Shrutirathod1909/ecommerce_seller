@@ -38,7 +38,6 @@ if ($action == "show") {
     $status = $input['status'] ?? $_GET['status'] ?? "approved";
 
     /* ---------- STATUS FILTER ---------- */
-
     if ($status == "approved") {
         $where = "p.verified=1 AND p.rejected=0 AND p.hide='N'";
     } else if ($status == "pending") {
@@ -52,53 +51,40 @@ if ($action == "show") {
     }
 
     /* ---------- VENDOR FILTER ---------- */
-
     if ($vendor_id > 0) {
         $where .= " AND p.vendor_id = $vendor_id";
     }
 
     /* ================= MAIN QUERY ================= */
-
     $sql = "
-    SELECT 
-        p.productid,
-        p.item_name,
-        p.subtitle,
-        p.primary_categories_name,
-        p.image1,
-
-        MAX(IFNULL(pdd.sku_code,'')) AS sku,
-
-        COALESCE(SUM(CAST(pdd.qty AS UNSIGNED)), 0) AS stock,
-
-        /* ALL PRICES */
-        MAX(pdd.mrp_price) AS mrp_price,
-        MAX(pdd.sale_price) AS sale_price,
-        MAX(pdd.cad_price) AS cad_price,
-
-        /* FINAL PRICE LOGIC */
-        CASE 
-            WHEN LOWER(p.primary_categories_name) LIKE '%cad%' THEN 
-                COALESCE(NULLIF(MAX(pdd.sale_price),0), MAX(pdd.cad_price), 0)
-            ELSE 
-                COALESCE(NULLIF(MAX(pdd.sale_price),0), MAX(pdd.mrp_price), 0)
-        END AS final_price
-
-    FROM products p
-
-    LEFT JOIN product_detail_description pdd
-        ON p.productid = pdd.product_id
-
-    WHERE $where
-
-    GROUP BY p.productid
-
-    ORDER BY p.productid DESC
+        SELECT 
+            p.productid,
+            p.item_name,
+            p.subtitle,
+            p.primary_categories_name,
+            p.image1,
+            MAX(IFNULL(pdd.sku_code,'')) AS sku,
+            COALESCE(SUM(CAST(pdd.qty AS UNSIGNED)), 0) AS stock,
+            MAX(pdd.mrp_price) AS mrp_price,
+            MAX(pdd.sale_price) AS sale_price,
+            MAX(pdd.cad_price) AS cad_price,
+            CASE 
+                WHEN LOWER(p.primary_categories_name) LIKE '%cad%' THEN 
+                    COALESCE(NULLIF(MAX(pdd.sale_price),0), MAX(pdd.cad_price), 0)
+                ELSE 
+                    COALESCE(NULLIF(MAX(pdd.sale_price),0), MAX(pdd.mrp_price), 0)
+            END AS final_price
+        FROM products p
+        LEFT JOIN product_detail_description pdd
+            ON p.productid = pdd.product_id
+        WHERE $where
+        GROUP BY p.productid
+        ORDER BY p.productid DESC
     ";
 
     $result = $conn->query($sql);
-
     $products = [];
+    $stockValues = [];
 
     while ($row = $result->fetch_assoc()) {
 
@@ -107,36 +93,52 @@ if ($action == "show") {
 
         $products[] = $row;
 
-        /* ================= STOCK TABLE UPDATE ================= */
-
+        /* ---------- PREPARE STOCK BATCH ---------- */
         $productId  = intval($row['productid']);
         $stockCount = intval($row['stock']);
         $sku        = $conn->real_escape_string($row['sku']);
 
-        $check = $conn->query("
-            SELECT id FROM product_stock 
-            WHERE product_id = $productId
-        ");
-
-        if ($check && $check->num_rows > 0) {
-
-            /* UPDATE */
-            $conn->query("
-                UPDATE product_stock 
-                SET stock_count = $stockCount, skucode = '$sku' 
-                WHERE product_id = $productId
-            ");
-
-        } else {
-
-            /* INSERT */
-            $conn->query("
-                INSERT INTO product_stock (product_id, stock_count, skucode) 
-                VALUES ($productId, $stockCount, '$sku')
-            ");
-        }
+        $stockValues[] = "($productId, $stockCount, '$sku')";
     }
 
+    /* ================= CLEAN DUPLICATES IN product_stock ================= */
+    // Merge duplicates: sum stock counts and keep smallest id
+    $conn->query("
+        CREATE TEMPORARY TABLE tmp_stock AS
+        SELECT product_id, skucode, SUM(stock_count) AS stock_count, MIN(id) AS keep_id
+        FROM product_stock
+        GROUP BY product_id, skucode
+    ");
+
+    // Update stock_count in kept rows
+    $conn->query("
+        UPDATE product_stock ps
+        JOIN tmp_stock ts ON ps.id = ts.keep_id
+        SET ps.stock_count = ts.stock_count
+    ");
+
+    // Delete other duplicate rows
+    $conn->query("
+        DELETE ps
+        FROM product_stock ps
+        JOIN tmp_stock ts
+          ON ps.product_id = ts.product_id
+         AND ps.skucode = ts.skucode
+         AND ps.id <> ts.keep_id
+    ");
+
+    /* ================= BATCH UPDATE/INSERT STOCK ================= */
+    if (!empty($stockValues)) {
+        $stockSql = "
+            INSERT INTO product_stock (product_id, stock_count, skucode) 
+            VALUES " . implode(',', $stockValues) . "
+            ON DUPLICATE KEY UPDATE 
+                stock_count = VALUES(stock_count)
+        ";
+        $conn->query($stockSql);
+    }
+
+    /* ================= RETURN JSON ================= */
     echo json_encode([
         "status" => "success",
         "data"   => $products
@@ -295,32 +297,27 @@ if ($action == "get_product") {
 /* ================= ADD / UPDATE PRODUCT ================= */
 if ($action == "add" || $action == "update_product") {
 
-    $productid = intval($input['productid'] ?? $input['product_id'] ?? 0);
+    $productid = intval($input['productid'] ?? 0);
 
     $item_name = trim($input['item_name'] ?? '');
     $subtitle = trim($input['subtitle'] ?? '');
     $primary_categories_name = $input['primary_categories_name'] ?? '';
-    $category = trim($input['category'] ?? '');
+    $category = $input['category'] ?? '';
     $subcategory = $input['subcategory'] ?? '';
     $child_category = $input['child_category'] ?? '';
     $gender = $input['gender'] ?? '';
     $payment_method = $input['payment_method'] ?? '';
     $gst_type = $input['gst_type'] ?? '';
-
     $weight = $input['weight'] ?? '';
     $hsn = $input['hsn'] ?? '';
-    $symbol = $input['symbol'] ?? ''; // ✅ FIX
+    $symbol = $input['symbol'] ?? '';
     $country_of_origin = $input['country_of_origin'] ?? '';
     $product_description = $input['product_description'] ?? '';
-
     $vendor_id = intval($input['vendor_id'] ?? 0);
     $company_id = intval($input['company_id'] ?? 0);
 
     if ($item_name == '') {
-        echo json_encode([
-            "status" => "error",
-            "message" => "Product name required"
-        ]);
+        echo json_encode(["status" => "error", "message" => "Product name required"]);
         exit;
     }
 
@@ -328,64 +325,49 @@ if ($action == "add" || $action == "update_product") {
     if ($action == "add") {
 
         $stmt = $conn->prepare("
-           INSERT INTO products (
-    item_name,
-    subtitle,
-    category,
-    primary_categories_name,
-    subcategory,
-    child_category,
-    gender,
-    payment_method,
-    gst_type,
-    weight,
-    hsn,
-    symbol, -- ✅ use this
-    country_of_origin,
-    product_description,
-    verified,
-    rejected,
-    hide,
-    vendor_id,
-    company_id,
-    created_on
-)
-VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'N', ?, ?, NOW()
-)
+            INSERT INTO products (
+                item_name, subtitle, category, primary_categories_name,
+                subcategory, child_category, gender, payment_method,
+                gst_type, weight, hsn, symbol, country_of_origin,
+                product_description, vendor_id, company_id, created_on
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         ");
 
         $stmt->bind_param(
-    "ssssssssssssssii",
-    $item_name,
-    $subtitle,
-    $category,
-    $primary_categories_name,
-    $subcategory,
-    $child_category,
-    $gender,
-    $payment_method,
-    $gst_type,
-    $weight,
-    $hsn,
-    $symbol, // ✅ here
-    $country_of_origin,
-    $product_description,
-    $vendor_id,
-    $company_id
-);
+            "ssssssssssssssii",
+            $item_name,
+            $subtitle,
+            $category,
+            $primary_categories_name,
+            $subcategory,
+            $child_category,
+            $gender,
+            $payment_method,
+            $gst_type,
+            $weight,
+            $hsn,
+            $symbol,
+            $country_of_origin,
+            $product_description,
+            $vendor_id,
+            $company_id
+        );
 
         if ($stmt->execute()) {
+
+            $newId = mysqli_insert_id($conn);
+
+            $result = $conn->query("SELECT * FROM products WHERE productid = $newId");
+            $product = $result->fetch_assoc();
+
             echo json_encode([
                 "status" => "success",
-                "message" => "Product added",
-                "productid" => mysqli_insert_id($conn)
+                "productid" => $newId,
+                "product" => $product
             ]);
         } else {
-            echo json_encode([
-                "status" => "error",
-                "message" => $stmt->error
-            ]);
+            echo json_encode(["status" => "error", "message" => $stmt->error]);
         }
 
         exit;
@@ -396,64 +378,52 @@ VALUES (
 
         $stmt = $conn->prepare("
             UPDATE products SET
-                item_name = ?,
-                subtitle = ?,
-                category = ?,
-                primary_categories_name = ?,
-                subcategory = ?,
-                child_category = ?,
-                gender = ?,
-                payment_method = ?,
-                gst_type = ?,
-                weight = ?,
-                hsn = ?,
-                symbol = ?,
-                country_of_origin = ?,
-                product_description = ?,
-                vendor_id = ?,
-                company_id = ?,
-                modified_on = NOW()
+                item_name = ?, subtitle = ?, category = ?, primary_categories_name = ?,
+                subcategory = ?, child_category = ?, gender = ?, payment_method = ?,
+                gst_type = ?, weight = ?, hsn = ?, symbol = ?, country_of_origin = ?,
+                product_description = ?, vendor_id = ?, company_id = ?, modified_on = NOW()
             WHERE productid = ?
         ");
 
         $stmt->bind_param(
-    "sssssssssssssssii",
-    $item_name,
-    $subtitle,
-    $category,
-    $primary_categories_name,
-    $subcategory,
-    $child_category,
-    $gender,
-    $payment_method,
-    $gst_type,
-    $weight,
-    $hsn,
-    $symbol, // ✅ here
-    $country_of_origin,
-    $product_description,
-    $vendor_id,
-    $company_id,
-    $productid
-);
+            "sssssssssssssssii",
+            $item_name,
+            $subtitle,
+            $category,
+            $primary_categories_name,
+            $subcategory,
+            $child_category,
+            $gender,
+            $payment_method,
+            $gst_type,
+            $weight,
+            $hsn,
+            $symbol,
+            $country_of_origin,
+            $product_description,
+            $vendor_id,
+            $company_id,
+            $productid
+        );
 
         if ($stmt->execute()) {
+
+            // ✅ RETURN UPDATED PRODUCT
+            $result = $conn->query("SELECT * FROM products WHERE productid = $productid");
+            $product = $result->fetch_assoc();
+
             echo json_encode([
                 "status" => "success",
-                "message" => "Product updated",
-                "productid" => $productid
+                "productid" => $productid,
+                "product" => $product
             ]);
         } else {
-            echo json_encode([
-                "status" => "error",
-                "message" => $stmt->error
-            ]);
+            echo json_encode(["status" => "error", "message" => $stmt->error]);
         }
 
         exit;
     }
 }
-
 /* ================= UPDATE VARIANTS ================= */
 if ($action == "update_variants") {
 

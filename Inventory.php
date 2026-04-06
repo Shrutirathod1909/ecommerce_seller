@@ -1,51 +1,34 @@
 <?php
 header("Content-Type: application/json");
 header("Access-Control-Allow-Origin: *");
-header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
-header("Pragma: no-cache");
 
 include "db.php";
 
-// ================= IMAGE FUNCTION =================
+$MAX_STOCK = 1000000;
+$MAX_QTY   = 10000;
+
 function normalizeImageUrl($image) {
     if (empty($image)) return '';
-
     $image = ltrim($image, '/');
-
-    if (strpos($image, 'productgallery/') === 0) {
-        return IMGPATH . $image;
-    }
-
     return IMGPATH . $image;
 }
 
-// ================= GET REQUEST =================
+// ================= GET =================
 if ($_SERVER['REQUEST_METHOD'] === "GET") {
 
-    $vendor_id = mysqli_real_escape_string($conn, $_GET['vendor_id'] ?? '');
+    $vendor_id = $_GET['vendor_id'] ?? '';
+
     if (empty($vendor_id)) {
         echo json_encode(["status"=>"error","message"=>"vendor_id required"]);
         exit;
     }
 
-    // Ensure stock rows exist for all products
-    $allProducts = mysqli_query($conn, "SELECT productid FROM products WHERE vendor_id='$vendor_id'");
-    while ($p = mysqli_fetch_assoc($allProducts)) {
-        $product_id = $p['productid'];
-        mysqli_query($conn, "
-            INSERT INTO product_stock (product_id, stock_count)
-            VALUES ('$product_id', 0)
-            ON DUPLICATE KEY UPDATE product_id=product_id
-        ");
-    }
-
-    // ================= COUNT SUMMARY =================
+    // ✅ SUMMARY
     $count_sql = "
         SELECT 
             COUNT(DISTINCT p.productid) AS total_products,
-            SUM(COALESCE(s.stock_sum,0) > 50) AS total_stock,
-            SUM(COALESCE(s.stock_sum,0) = 0) AS out_of_stock,
-            SUM(COALESCE(s.stock_sum,0) BETWEEN 1 AND 5) AS low_stock
+            SUM(IF(COALESCE(s.stock_sum,0)=0,1,0)) AS out_of_stock,
+            SUM(IF(COALESCE(s.stock_sum,0) BETWEEN 1 AND 5,1,0)) AS low_stock
         FROM products p
         LEFT JOIN (
             SELECT product_id, SUM(stock_count) AS stock_sum
@@ -60,103 +43,109 @@ if ($_SERVER['REQUEST_METHOD'] === "GET") {
     $count_result = mysqli_query($conn, $count_sql);
     $count_data = mysqli_fetch_assoc($count_result);
 
-    // ================= PRODUCT LIST =================
+    // ✅ PRODUCT LIST (FIXED)
     $sql = "
         SELECT 
             p.productid,
             p.item_name,
             p.image1,
-            COALESCE(SUM(s.stock_count),0) AS stock_count
+            MIN(s.skucode) AS skucode,
+            SUM(s.stock_count) AS stock_count
         FROM products p
         LEFT JOIN product_stock s ON p.productid = s.product_id
         WHERE p.vendor_id='$vendor_id'
         AND p.hide='N'
         AND p.verified='1'
-        GROUP BY p.productid, p.item_name, p.image1
+        GROUP BY p.productid
         ORDER BY p.productid DESC
     ";
 
     $result = mysqli_query($conn, $sql);
 
     $data = [];
+
     while ($row = mysqli_fetch_assoc($result)) {
-        $row['stock_count'] = (int)$row['stock_count'];
+
+        $stock = max(0, min((int)$row['stock_count'], $MAX_STOCK));
+
+        $row['stock_count'] = (string)$stock;
         $row['image'] = normalizeImageUrl($row['image1']);
+
         unset($row['image1']);
+
         $data[] = $row;
     }
 
     echo json_encode([
-        "status" => "success",
-        "total_products" => (int)$count_data['total_products'],
-        "total_stock" => (int)$count_data['total_stock'],
+        "status"=>"success",
         "out_of_stock" => (int)$count_data['out_of_stock'],
-        "low_stock" => (int)$count_data['low_stock'],
-        "data" => $data
+        "low_stock"    => (int)$count_data['low_stock'],
+        "data"=>$data
     ]);
+
     exit;
 }
 
-// ================= POST REQUEST (UPDATE STOCK) =================
+// ================= POST =================
 elseif ($_SERVER['REQUEST_METHOD'] === "POST") {
 
-    $action = $_POST['action'] ?? '';
-    $product_id = (int)($_POST['product_id'] ?? 0);
-    $qty = (int)($_POST['qty'] ?? 1);
+    $input = json_decode(file_get_contents("php://input"), true);
 
-    if ($product_id == 0) {
-        echo json_encode(["status"=>"error","message"=>"product_id required"]);
+    $action  = strtolower(trim($input['action'] ?? ''));
+    $skucode = trim($input['skucode'] ?? '');
+    $qty     = (int)($input['qty'] ?? 0);
+
+    if (!in_array($action, ["increase", "decrease"])) {
+        echo json_encode(["status"=>"error","message"=>"Invalid action"]);
         exit;
     }
 
-    // Ensure stock row exists
-    mysqli_query($conn, "
-        INSERT INTO product_stock (product_id, stock_count)
-        VALUES ('$product_id', 0)
-        ON DUPLICATE KEY UPDATE product_id=product_id
-    ");
-
-    if ($action === "increase") {
-        $sql = "
-            UPDATE product_stock 
-            SET stock_count = stock_count + $qty
-            WHERE product_id='$product_id'
-        ";
-    } elseif ($action === "decrease") {
-        $sql = "
-            UPDATE product_stock 
-            SET stock_count = GREATEST(0, stock_count - $qty)
-            WHERE product_id='$product_id'
-        ";
-    } else {
-        echo json_encode(["status"=>"error","message"=>"invalid action"]);
+    if (empty($skucode) || $qty <= 0) {
+        echo json_encode(["status"=>"error","message"=>"Invalid input"]);
         exit;
     }
 
-    if (mysqli_query($conn, $sql)) {
-        // Return updated stock
+    mysqli_begin_transaction($conn);
+
+    try {
+
         $res = mysqli_query($conn, "
-            SELECT SUM(stock_count) AS stock_count 
+            SELECT stock_count 
             FROM product_stock 
-            WHERE product_id='$product_id'
+            WHERE skucode='$skucode' 
+            FOR UPDATE
         ");
+
+        if (mysqli_num_rows($res) == 0) {
+            throw new Exception("SKU not found");
+        }
+
         $row = mysqli_fetch_assoc($res);
 
-        echo json_encode([
-            "status" => "success",
-            "product_id" => $product_id,
-            "stock_count" => (int)$row['stock_count']
-        ]);
+        $current = (int)$row['stock_count'];
 
-    } else {
-        echo json_encode(["status"=>"error","message"=>mysqli_error($conn)]);
+        if ($action === "increase") {
+            $new_stock = $current + $qty;
+        } else {
+            if ($current < $qty) throw new Exception("Not enough stock");
+            $new_stock = $current - $qty;
+        }
+
+        mysqli_query($conn, "
+            UPDATE product_stock 
+            SET stock_count='$new_stock' 
+            WHERE skucode='$skucode'
+        ");
+
+        mysqli_commit($conn);
+
+        echo json_encode(["status"=>"success"]);
+
+    } catch(Exception $e) {
+        mysqli_rollback($conn);
+        echo json_encode(["status"=>"error","message"=>$e->getMessage()]);
     }
 
     exit;
-}
-
-// ================= INVALID METHOD =================
-else {
-    echo json_encode(["status"=>"error","message"=>"Invalid request method"]);
 }
 ?>
