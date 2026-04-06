@@ -5,7 +5,6 @@ header("Access-Control-Allow-Origin: *");
 include "db.php";
 
 $MAX_STOCK = 1000000;
-$MAX_QTY   = 10000;
 
 function normalizeImageUrl($image) {
     if (empty($image)) return '';
@@ -23,18 +22,30 @@ if ($_SERVER['REQUEST_METHOD'] === "GET") {
         exit;
     }
 
-    // ✅ SUMMARY
+    // ================= SUMMARY (FIXED) =================
     $count_sql = "
         SELECT 
             COUNT(DISTINCT p.productid) AS total_products,
+
+            -- ✅ TOTAL STOCK (IMPORTANT FIX)
+            COALESCE(SUM(s.stock_sum),0) AS total_stock,
+
+            -- out of stock
             SUM(IF(COALESCE(s.stock_sum,0)=0,1,0)) AS out_of_stock,
+
+            -- low stock (1-5)
             SUM(IF(COALESCE(s.stock_sum,0) BETWEEN 1 AND 5,1,0)) AS low_stock
+
         FROM products p
+
         LEFT JOIN (
-            SELECT product_id, SUM(stock_count) AS stock_sum
+            SELECT 
+                product_id, 
+                SUM(stock_count) AS stock_sum
             FROM product_stock
             GROUP BY product_id
         ) s ON p.productid = s.product_id
+
         WHERE p.vendor_id='$vendor_id'
         AND p.hide='N'
         AND p.verified='1'
@@ -43,14 +54,14 @@ if ($_SERVER['REQUEST_METHOD'] === "GET") {
     $count_result = mysqli_query($conn, $count_sql);
     $count_data = mysqli_fetch_assoc($count_result);
 
-    // ✅ PRODUCT LIST (FIXED)
+    // ================= PRODUCT LIST =================
     $sql = "
         SELECT 
             p.productid,
             p.item_name,
             p.image1,
             MIN(s.skucode) AS skucode,
-            SUM(s.stock_count) AS stock_count
+            COALESCE(SUM(s.stock_count),0) AS stock_count
         FROM products p
         LEFT JOIN product_stock s ON p.productid = s.product_id
         WHERE p.vendor_id='$vendor_id'
@@ -68,19 +79,25 @@ if ($_SERVER['REQUEST_METHOD'] === "GET") {
 
         $stock = max(0, min((int)$row['stock_count'], $MAX_STOCK));
 
-        $row['stock_count'] = (string)$stock;
-        $row['image'] = normalizeImageUrl($row['image1']);
-
-        unset($row['image1']);
-
-        $data[] = $row;
+        $data[] = [
+            "productid"   => $row['productid'],
+            "item_name"   => $row['item_name'],
+            "skucode"     => $row['skucode'],
+            "stock_count" => (string)$stock,
+            "image"       => normalizeImageUrl($row['image1']),
+        ];
     }
 
     echo json_encode([
-        "status"=>"success",
-        "out_of_stock" => (int)$count_data['out_of_stock'],
-        "low_stock"    => (int)$count_data['low_stock'],
-        "data"=>$data
+        "status" => "success",
+
+        // ✅ FIXED OUTPUT (NOW FLUTTER WILL WORK)
+        "total_products" => (int)$count_data['total_products'],
+        "total_stock"    => (int)$count_data['total_stock'],
+        "out_of_stock"   => (int)$count_data['out_of_stock'],
+        "low_stock"       => (int)$count_data['low_stock'],
+
+        "data" => $data
     ]);
 
     exit;
@@ -121,7 +138,6 @@ elseif ($_SERVER['REQUEST_METHOD'] === "POST") {
         }
 
         $row = mysqli_fetch_assoc($res);
-
         $current = (int)$row['stock_count'];
 
         if ($action === "increase") {
