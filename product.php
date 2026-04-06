@@ -297,27 +297,32 @@ if ($action == "get_product") {
 /* ================= ADD / UPDATE PRODUCT ================= */
 if ($action == "add" || $action == "update_product") {
 
-    $productid = intval($input['productid'] ?? 0);
+    $productid = intval($input['productid'] ?? $input['product_id'] ?? 0);
 
     $item_name = trim($input['item_name'] ?? '');
     $subtitle = trim($input['subtitle'] ?? '');
     $primary_categories_name = $input['primary_categories_name'] ?? '';
-    $category = $input['category'] ?? '';
+    $category = trim($input['category'] ?? '');
     $subcategory = $input['subcategory'] ?? '';
     $child_category = $input['child_category'] ?? '';
     $gender = $input['gender'] ?? '';
     $payment_method = $input['payment_method'] ?? '';
     $gst_type = $input['gst_type'] ?? '';
+
     $weight = $input['weight'] ?? '';
     $hsn = $input['hsn'] ?? '';
-    $symbol = $input['symbol'] ?? '';
+    $symbol = $input['symbol'] ?? ''; // ✅ FIX
     $country_of_origin = $input['country_of_origin'] ?? '';
     $product_description = $input['product_description'] ?? '';
+
     $vendor_id = intval($input['vendor_id'] ?? 0);
     $company_id = intval($input['company_id'] ?? 0);
 
     if ($item_name == '') {
-        echo json_encode(["status" => "error", "message" => "Product name required"]);
+        echo json_encode([
+            "status" => "error",
+            "message" => "Product name required"
+        ]);
         exit;
     }
 
@@ -325,49 +330,64 @@ if ($action == "add" || $action == "update_product") {
     if ($action == "add") {
 
         $stmt = $conn->prepare("
-            INSERT INTO products (
-                item_name, subtitle, category, primary_categories_name,
-                subcategory, child_category, gender, payment_method,
-                gst_type, weight, hsn, symbol, country_of_origin,
-                product_description, vendor_id, company_id, created_on
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+           INSERT INTO products (
+    item_name,
+    subtitle,
+    category,
+    primary_categories_name,
+    subcategory,
+    child_category,
+    gender,
+    payment_method,
+    gst_type,
+    weight,
+    hsn,
+    symbol, -- ✅ use this
+    country_of_origin,
+    product_description,
+    verified,
+    rejected,
+    hide,
+    vendor_id,
+    company_id,
+    created_on
+)
+VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'N', ?, ?, NOW()
+)
         ");
 
         $stmt->bind_param(
-            "ssssssssssssssii",
-            $item_name,
-            $subtitle,
-            $category,
-            $primary_categories_name,
-            $subcategory,
-            $child_category,
-            $gender,
-            $payment_method,
-            $gst_type,
-            $weight,
-            $hsn,
-            $symbol,
-            $country_of_origin,
-            $product_description,
-            $vendor_id,
-            $company_id
-        );
+    "ssssssssssssssii",
+    $item_name,
+    $subtitle,
+    $category,
+    $primary_categories_name,
+    $subcategory,
+    $child_category,
+    $gender,
+    $payment_method,
+    $gst_type,
+    $weight,
+    $hsn,
+    $symbol, // ✅ here
+    $country_of_origin,
+    $product_description,
+    $vendor_id,
+    $company_id
+);
 
         if ($stmt->execute()) {
-
-            $newId = mysqli_insert_id($conn);
-
-            $result = $conn->query("SELECT * FROM products WHERE productid = $newId");
-            $product = $result->fetch_assoc();
-
             echo json_encode([
                 "status" => "success",
-                "productid" => $newId,
-                "product" => $product
+                "message" => "Product added",
+                "productid" => mysqli_insert_id($conn)
             ]);
         } else {
-            echo json_encode(["status" => "error", "message" => $stmt->error]);
+            echo json_encode([
+                "status" => "error",
+                "message" => $stmt->error
+            ]);
         }
 
         exit;
@@ -378,52 +398,64 @@ if ($action == "add" || $action == "update_product") {
 
         $stmt = $conn->prepare("
             UPDATE products SET
-                item_name = ?, subtitle = ?, category = ?, primary_categories_name = ?,
-                subcategory = ?, child_category = ?, gender = ?, payment_method = ?,
-                gst_type = ?, weight = ?, hsn = ?, symbol = ?, country_of_origin = ?,
-                product_description = ?, vendor_id = ?, company_id = ?, modified_on = NOW()
+                item_name = ?,
+                subtitle = ?,
+                category = ?,
+                primary_categories_name = ?,
+                subcategory = ?,
+                child_category = ?,
+                gender = ?,
+                payment_method = ?,
+                gst_type = ?,
+                weight = ?,
+                hsn = ?,
+                symbol = ?,
+                country_of_origin = ?,
+                product_description = ?,
+                vendor_id = ?,
+                company_id = ?,
+                modified_on = NOW()
             WHERE productid = ?
         ");
 
         $stmt->bind_param(
-            "sssssssssssssssii",
-            $item_name,
-            $subtitle,
-            $category,
-            $primary_categories_name,
-            $subcategory,
-            $child_category,
-            $gender,
-            $payment_method,
-            $gst_type,
-            $weight,
-            $hsn,
-            $symbol,
-            $country_of_origin,
-            $product_description,
-            $vendor_id,
-            $company_id,
-            $productid
-        );
+    "sssssssssssssssii",
+    $item_name,
+    $subtitle,
+    $category,
+    $primary_categories_name,
+    $subcategory,
+    $child_category,
+    $gender,
+    $payment_method,
+    $gst_type,
+    $weight,
+    $hsn,
+    $symbol, // ✅ here
+    $country_of_origin,
+    $product_description,
+    $vendor_id,
+    $company_id,
+    $productid
+);
 
         if ($stmt->execute()) {
-
-            // ✅ RETURN UPDATED PRODUCT
-            $result = $conn->query("SELECT * FROM products WHERE productid = $productid");
-            $product = $result->fetch_assoc();
-
             echo json_encode([
                 "status" => "success",
-                "productid" => $productid,
-                "product" => $product
+                "message" => "Product updated",
+                "productid" => $productid
             ]);
         } else {
-            echo json_encode(["status" => "error", "message" => $stmt->error]);
+            echo json_encode([
+                "status" => "error",
+                "message" => $stmt->error
+            ]);
         }
 
         exit;
     }
 }
+
 /* ================= UPDATE VARIANTS ================= */
 if ($action == "update_variants") {
 
